@@ -47,10 +47,11 @@ async function renderFactures() {
 async function downloadFacture(id) {
   const f = _facAll.find(x => x.id === id);
   if (!f || !f.pdf_path) { toast('PDF introuvable', 'err'); return; }
+  const win = window.open('', '_blank');
   try {
     const url = await sbSignedUrl('factures', f.pdf_path);
-    window.open(url, '_blank');
-  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+    if (win) win.location.href = url; else window.open(url, '_blank');
+  } catch (e) { win?.close(); toast('Erreur : ' + e.message, 'err'); }
 }
 
 async function openGenerationFactures() {
