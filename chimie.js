@@ -49,15 +49,12 @@ function _tplVentes() {
   const term = _chVentesSearch.toLowerCase();
   const filtered = _chVentes.filter(v => !term || (v.client || '').toLowerCase().includes(term));
 
-  // Regroupe par client, chaque groupe trié par date décroissante, groupes triés par vente la plus récente.
-  const parClient = {};
-  filtered.forEach(v => { const key = v.client || '— Sans client —'; (parClient[key] = parClient[key] || []).push(v); });
-  const clients = Object.keys(parClient).sort((a, b) => {
-    const da = Math.max(...parClient[a].map(v => new Date(v.date).getTime()));
-    const db = Math.max(...parClient[b].map(v => new Date(v.date).getTime()));
-    return db - da;
+  // Tri principal par date décroissante ; à date égale, les lignes d'un même client restent groupées.
+  const sorted = [...filtered].sort((a, b) => {
+    const dd = new Date(b.date) - new Date(a.date);
+    if (dd !== 0) return dd;
+    return (a.client || '').localeCompare(b.client || '');
   });
-  clients.forEach(c => parClient[c].sort((a, b) => new Date(b.date) - new Date(a.date)));
 
   return `
     <div class="grid cards4" style="margin-bottom:18px;">
@@ -66,34 +63,27 @@ function _tplVentes() {
       <div class="card kpi"><div class="label">Bénéfice</div><div class="value pos">${fmtEUR(benef)}</div></div>
     </div>
     <div class="toolbar"><div class="search"><input placeholder="Rechercher un client…" value="${esc(_chVentesSearch)}" oninput="_chVentesSearch=this.value;renderChimie()"></div></div>
-    ${clients.length ? clients.map(cl => {
-      const lignes = parClient[cl];
-      const totClient = lignes.reduce((s, v) => s + Number(v.total_vente || 0), 0);
-      const benefClient = lignes.reduce((s, v) => s + (Number(v.total_vente || 0) - Number(v.total_achat || 0)), 0);
-      return `
-      <div class="card" style="margin-bottom:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
-          <div style="font-weight:700;">${esc(cl)}</div>
-          <span class="page-sub">${lignes.length} vente(s) · ${fmtEUR(totClient)} · bénéfice ${fmtEUR(benefClient)}</span>
-        </div>
-        <table>
-          <thead><tr><th>Date</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th></th></tr></thead>
-          <tbody>
-            ${lignes.map(v => `
-              <tr style="${v.annulee ? 'opacity:.45;' : ''}">
-                <td>${fmtDate(v.date)}</td>
-                <td>${esc(v.produit_nom)}${v.marque ? `<div class="page-sub">${esc(v.marque)}</div>` : ''}</td>
-                <td>${v.quantite}</td>
-                <td>${fmtEUR(v.total_achat)}</td>
-                <td>${fmtEUR(v.total_vente)}</td>
-                <td style="color:${v.benefice>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(v.benefice)}</td>
-                <td>${v.annulee ? '<span class="badge badge-muted">Annulée</span>' : `<button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
-    }).join('') : `<div class="empty">Aucune vente</div>`}
-  `;
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th></th></tr></thead>
+        <tbody>
+          ${sorted.length ? sorted.map((v, i) => {
+            const memeGroupe = i > 0 && sorted[i-1].date === v.date && sorted[i-1].client === v.client;
+            return `
+            <tr style="${v.annulee ? 'opacity:.45;' : ''}${memeGroupe ? 'border-top:none;' : ''}">
+              <td>${memeGroupe ? '' : fmtDate(v.date)}</td>
+              <td>${memeGroupe ? '' : (esc(v.client) || '—')}</td>
+              <td>${esc(v.produit_nom)}${v.marque ? `<div class="page-sub">${esc(v.marque)}</div>` : ''}</td>
+              <td>${v.quantite}</td>
+              <td>${fmtEUR(v.total_achat)}</td>
+              <td>${fmtEUR(v.total_vente)}</td>
+              <td style="color:${v.benefice>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(v.benefice)}</td>
+              <td>${v.annulee ? '<span class="badge badge-muted">Annulée</span>' : `<button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}</td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="8"><div class="empty">Aucune vente</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 async function annulerVente(id) {
