@@ -26,6 +26,7 @@ async function renderChimie() {
       <div class="pill-tab ${_chTab==='clients'?'active':''}" onclick="_chTab='clients';renderChimie()">Commandes clients</div>
       <div class="pill-tab ${_chTab==='fournisseur'?'active':''}" onclick="_chTab='fournisseur';renderChimie()">Commandes fournisseur</div>
       <div class="pill-tab ${_chTab==='stock'?'active':''}" onclick="_chTab='stock';renderChimie()">Stock</div>
+      <div class="pill-tab ${_chTab==='recap'?'active':''}" onclick="_chTab='recap';renderChimie()">Récap mensuel</div>
     </div>
     <div id="ch-body"></div>
   `);
@@ -34,7 +35,58 @@ async function renderChimie() {
   if (_chTab === 'ventes') body.innerHTML = _tplVentes();
   else if (_chTab === 'clients') body.innerHTML = _tplClients();
   else if (_chTab === 'fournisseur') body.innerHTML = _tplFournisseur();
-  else body.innerHTML = _tplStock();
+  else if (_chTab === 'stock') body.innerHTML = _tplStock();
+  else { body.innerHTML = `<div class="empty">Chargement…</div>`; await _renderRecap(); }
+}
+
+async function _renderRecap() {
+  const [ventesAll, achatsAll] = await Promise.all([
+    sbSelect('compta_ventes', 'annulee=eq.false&select=date,total_vente,total_achat'),
+    sbSelect('compta_commandes_fournisseur', 'recue=eq.true&select=date_reception,quantite,prix_achat_unitaire'),
+  ]);
+  const parMois = {};
+  MOIS.forEach(m => parMois[m] = { vente: 0, achatVente: 0, achatFourn: 0 });
+  ventesAll.forEach(v => {
+    const m = MOIS[new Date(v.date).getMonth()];
+    if (!parMois[m]) return;
+    parMois[m].vente += Number(v.total_vente || 0);
+    parMois[m].achatVente += Number(v.total_achat || 0);
+  });
+  achatsAll.forEach(c => {
+    if (!c.date_reception) return;
+    const m = MOIS[new Date(c.date_reception).getMonth()];
+    if (!parMois[m]) return;
+    parMois[m].achatFourn += Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0);
+  });
+  const totVente = MOIS.reduce((s, m) => s + parMois[m].vente, 0);
+  const totAchatFourn = MOIS.reduce((s, m) => s + parMois[m].achatFourn, 0);
+  const totBenef = MOIS.reduce((s, m) => s + (parMois[m].vente - parMois[m].achatVente), 0);
+
+  document.getElementById('ch-body').innerHTML = `
+    <div class="grid cards4" style="margin-bottom:18px;">
+      <div class="card kpi"><div class="label">Achats fournisseur (année)</div><div class="value">${fmtEUR(totAchatFourn)}</div></div>
+      <div class="card kpi"><div class="label">Ventes (année)</div><div class="value pos">${fmtEUR(totVente)}</div></div>
+      <div class="card kpi"><div class="label">Bénéfice (année)</div><div class="value pos">${fmtEUR(totBenef)}</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mois</th><th>Achats fournisseur (réceptionnés)</th><th>Ventes</th><th>Bénéfice</th></tr></thead>
+        <tbody>
+          ${MOIS.map(m => {
+            const d = parMois[m];
+            if (!d.vente && !d.achatFourn) return '';
+            return `<tr>
+              <td><b>${m}</b></td>
+              <td>${fmtEUR(d.achatFourn)}</td>
+              <td>${fmtEUR(d.vente)}</td>
+              <td style="color:var(--accent2)">${fmtEUR(d.vente - d.achatVente)}</td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="4"><div class="empty">Aucune donnée</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="page-sub" style="margin-top:8px;">Un achat compte dans le mois où il est réceptionné (pas où il est commandé).</div>
+  `;
 }
 
 // ── VENTES ───────────────────────────────────────────────────────────
@@ -195,7 +247,7 @@ function _tplFournisseur() {
               <td>${fmtEUR(c.prix_achat_unitaire)}</td>
               <td>${fmtEUR(c.quantite * c.prix_achat_unitaire)}</td>
               <td style="display:flex;gap:6px;">
-                <button class="btn btn-primary btn-sm" onclick="receptionnerCommande('${c.id}')">Réceptionner</button>
+                <button class="btn btn-primary btn-sm" onclick="ouvrirReceptionModal('${c.id}')">Réceptionner</button>
                 <button class="btn btn-ghost btn-sm" onclick="deleteCmdFournisseur('${c.id}')">Suppr.</button>
               </td>
             </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune commande en attente</div></td></tr>`}
@@ -266,9 +318,29 @@ async function deleteCmdFournisseur(id) {
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
+function ouvrirReceptionModal(id) {
+  const c = _chFournisseur.find(x => x.id === id);
+  if (!c) return;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Réceptionner — ${esc(c.produit_nom)}</h3>
+    <div class="page-sub" style="margin-bottom:14px;">${c.quantite} × ${fmtEUR(c.prix_achat_unitaire)} = ${fmtEUR(c.quantite * c.prix_achat_unitaire)}</div>
+    <div class="field"><label>Date de réception</label><input id="rc-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="page-sub" style="margin-bottom:10px;">Détermine dans quel mois cette dépense et ce stock sont comptabilisés.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="receptionnerCommande('${id}')">Confirmer la réception</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
 async function receptionnerCommande(id) {
   const c = _chFournisseur.find(x => x.id === id);
   if (!c) return;
+  const dateReception = document.getElementById('rc-date')?.value || new Date().toISOString().slice(0, 10);
   try {
     let produit = c.produit_id ? _chProduits.find(p => p.id === c.produit_id) : _chProduits.find(p => p.nom === c.produit_nom);
     if (produit) {
@@ -278,7 +350,8 @@ async function receptionnerCommande(id) {
     }
     // Réception = statut réel de la dépense (pas la commande) : le stock ET la dépense
     // mensuelle ne bougent qu'ici, jamais à la simple création de la commande.
-    await sbUpdate('compta_commandes_fournisseur', id, { recue: true, date_reception: new Date().toISOString().slice(0, 10) });
+    await sbUpdate('compta_commandes_fournisseur', id, { recue: true, date_reception: dateReception });
+    document.querySelector('.modal-bg')?.remove();
     toast('Stock mis à jour et dépense enregistrée', 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
