@@ -1,5 +1,5 @@
 const CATEGORIES = {
-  revenu: ['Coaching distance', 'Coaching séances', 'Chimie', 'Addict nutrition'],
+  revenu: ['ARE', 'Autre'],
   depense_fixe: ['Appartement', 'Banque', 'Assurance', 'Pro', 'Crypto'],
   depense_variable: ['Alimentation', 'Voiture', 'Perso', 'Pro', 'Chat', 'Chimie', 'Santé', 'Soirées', 'Vape', 'Resto', 'Vêtements'],
   epargne: ['Epargne crypto'],
@@ -12,16 +12,39 @@ let _buMois = moisActuel();
 let _buType = 'revenu';
 let _buLignes = [];
 let _buTreso = null;
+let _buAuto = { coachingDistance: 0, coachingSeance: 0, chimie: 0, addict: 0, achatsFournisseur: 0 };
+
+function _moisDateRange(mois) {
+  const num = parseInt(MOIS_NUM[mois.toUpperCase()], 10);
+  const debut = `2026-${String(num).padStart(2, '0')}-01`;
+  const finMoisNum = num === 12 ? 1 : num + 1;
+  const finAnnee = num === 12 ? 2027 : 2026;
+  const fin = `${finAnnee}-${String(finMoisNum).padStart(2, '0')}-01`;
+  return { debut, fin };
+}
 
 async function renderBudget() {
-  const [lignes, treso] = await Promise.all([
+  const { debut, fin } = _moisDateRange(_buMois);
+  const [lignes, treso, paiements, ventes, addict, achats] = await Promise.all([
     sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`),
     sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
+    sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
+    sbSelect('compta_ventes', `annulee=eq.false&date=gte.${debut}&date=lt.${fin}`),
+    sbSelect('compta_addict', `date=gte.${debut}&date=lt.${fin}`),
+    sbSelect('compta_commandes_fournisseur', `recue=eq.true&date_reception=gte.${debut}&date_reception=lt.${fin}`),
   ]);
   _buLignes = lignes;
   _buTreso = treso[0] || null;
+  _buAuto = {
+    coachingDistance: paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0),
+    coachingSeance: paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0),
+    chimie: ventes.reduce((s, v) => s + Number(v.total_vente || 0), 0),
+    addict: addict.reduce((s, a) => s + Number(a.vente || 0), 0),
+    achatsFournisseur: achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0),
+  };
+  const totalAutoRevenu = _buAuto.coachingDistance + _buAuto.coachingSeance + _buAuto.chimie + _buAuto.addict;
 
-  const totRevenu = sum('revenu'), totFixe = sum('depense_fixe'), totVar = sum('depense_variable'), totEparg = sum('epargne'), totCredit = sum('credit');
+  const totRevenu = totalAutoRevenu + sum('revenu'), totFixe = sum('depense_fixe'), totVar = _buAuto.achatsFournisseur + sum('depense_variable'), totEparg = sum('epargne'), totCredit = sum('credit');
   const resultat = totRevenu - totFixe - totVar - totEparg - totCredit;
 
   const rowsType = _buLignes.filter(l => l.type === _buType);
@@ -55,8 +78,34 @@ async function renderBudget() {
     </div>
 
     <div class="pill-tabs" style="margin-bottom:14px;flex-wrap:wrap;">
-      ${Object.keys(TYPE_LABELS).map(t => `<div class="pill-tab ${_buType===t?'active':''}" onclick="_buType='${t}';renderBudget()">${TYPE_LABELS[t]} · ${fmtEUR(sum(t))}</div>`).join('')}
+      ${Object.keys(TYPE_LABELS).map(t => `<div class="pill-tab ${_buType===t?'active':''}" onclick="_buType='${t}';renderBudget()">${TYPE_LABELS[t]} · ${fmtEUR(t==='revenu' ? totalAutoRevenu + sum(t) : t==='depense_variable' ? _buAuto.achatsFournisseur + sum(t) : sum(t))}</div>`).join('')}
     </div>
+
+    ${_buType === 'revenu' ? `
+    <div class="table-wrap" style="margin-bottom:16px;">
+      <table>
+        <thead><tr><th>Catégorie</th><th>Source</th><th>Montant</th></tr></thead>
+        <tbody>
+          <tr><td><b>Coaching distance</b></td><td><span class="badge badge-blue">Auto · Paiements</span></td><td>${fmtEUR(_buAuto.coachingDistance)}</td></tr>
+          <tr><td><b>Coaching séances</b></td><td><span class="badge badge-blue">Auto · Paiements</span></td><td>${fmtEUR(_buAuto.coachingSeance)}</td></tr>
+          <tr><td><b>Chimie</b></td><td><span class="badge badge-blue">Auto · Ventes</span></td><td>${fmtEUR(_buAuto.chimie)}</td></tr>
+          <tr><td><b>Addict nutrition</b></td><td><span class="badge badge-blue">Auto · Ventes</span></td><td>${fmtEUR(_buAuto.addict)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="page-sub" style="margin:-8px 0 10px;">Revenus manuels (ARE, etc.)</div>
+    ` : ''}
+    ${_buType === 'depense_variable' ? `
+    <div class="table-wrap" style="margin-bottom:16px;">
+      <table>
+        <thead><tr><th>Catégorie</th><th>Source</th><th>Montant</th></tr></thead>
+        <tbody>
+          <tr><td><b>Commandes fournisseur (Chimie)</b></td><td><span class="badge badge-blue">Auto · Réceptions</span></td><td>${fmtEUR(_buAuto.achatsFournisseur)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="page-sub" style="margin:-8px 0 10px;">Dépenses variables manuelles</div>
+    ` : ''}
 
     <div class="table-wrap">
       <table>
@@ -70,7 +119,7 @@ async function renderBudget() {
               <td>${fmtDate(l.date) || '—'}</td>
               <td>${fmtEUR(l.montant)}</td>
               <td><button class="btn btn-ghost btn-sm" onclick="deleteLigne('${l.id}')">Suppr.</button></td>
-            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune ligne</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune ligne manuelle</div></td></tr>`}
         </tbody>
       </table>
     </div>
