@@ -52,8 +52,8 @@ async function renderBudget() {
   _buAuto = {
     coachingDistance: paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0),
     coachingSeance: paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0),
-    chimie: ventes.reduce((s, v) => s + Number(v.total_vente || 0), 0),
-    addict: addict.reduce((s, a) => s + Number(a.vente || 0), 0),
+    chimie: ventes.reduce((s, v) => s + (Number(v.total_vente || 0) - Number(v.total_achat || 0)), 0),
+    addict: addict.reduce((s, a) => s + (Number(a.vente || 0) - Number(a.achat || 0)), 0),
     achatsFournisseur: achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0),
   };
   const totalAutoRevenu = _buAuto.coachingDistance + _buAuto.coachingSeance + _buAuto.chimie + _buAuto.addict;
@@ -102,8 +102,8 @@ async function renderBudget() {
         <tbody>
           <tr><td><b>Coaching distance</b></td><td><span class="badge badge-blue">Auto · Paiements</span></td><td>${fmtEUR(_buAuto.coachingDistance)}</td></tr>
           <tr><td><b>Coaching séances</b></td><td><span class="badge badge-blue">Auto · Paiements</span></td><td>${fmtEUR(_buAuto.coachingSeance)}</td></tr>
-          <tr><td><b>Chimie</b></td><td><span class="badge badge-blue">Auto · Ventes</span></td><td>${fmtEUR(_buAuto.chimie)}</td></tr>
-          <tr><td><b>Addict nutrition</b></td><td><span class="badge badge-blue">Auto · Ventes</span></td><td>${fmtEUR(_buAuto.addict)}</td></tr>
+          <tr><td><b>Chimie (bénéfice)</b></td><td><span class="badge badge-blue">Auto · Ventes − achats</span></td><td>${fmtEUR(_buAuto.chimie)}</td></tr>
+          <tr><td><b>Addict nutrition (bénéfice)</b></td><td><span class="badge badge-blue">Auto · Ventes − achats</span></td><td>${fmtEUR(_buAuto.addict)}</td></tr>
         </tbody>
       </table>
     </div>
