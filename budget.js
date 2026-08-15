@@ -12,6 +12,7 @@ let _buMois = moisActuel();
 let _buType = 'revenu';
 let _buLignes = [];
 let _buTreso = null;
+let _buModeles = [];
 let _buAuto = { coachingDistance: 0, coachingSeance: 0, chimie: 0, addict: 0, achatsFournisseur: 0 };
 
 function _moisDateRange(mois) {
@@ -25,14 +26,27 @@ function _moisDateRange(mois) {
 
 async function renderBudget() {
   const { debut, fin } = _moisDateRange(_buMois);
-  const [lignes, treso, paiements, ventes, addict, achats] = await Promise.all([
+  let [lignes, treso, paiements, ventes, addict, achats, modeles] = await Promise.all([
     sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`),
     sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
     sbSelect('compta_ventes', `annulee=eq.false&date=gte.${debut}&date=lt.${fin}`),
     sbSelect('compta_addict', `date=gte.${debut}&date=lt.${fin}`),
     sbSelect('compta_commandes_fournisseur', `recue=eq.true&date_reception=gte.${debut}&date_reception=lt.${fin}`),
+    sbSelect('compta_depenses_fixes_modeles', 'actif=eq.true&order=categorie.asc'),
   ]);
+  _buModeles = modeles;
+
+  // Reconduction automatique : toute dépense fixe active sans ligne ce mois-ci est créée à la volée.
+  const manquantes = modeles.filter(m => !lignes.some(l => l.modele_id === m.id));
+  if (manquantes.length) {
+    await Promise.all(manquantes.map(m => sbInsert('compta_budget_lignes', {
+      mois: _buMois, annee: 2026, type: 'depense_fixe', modele_id: m.id,
+      categorie: m.categorie, banque: m.banque, detail: m.detail, montant: m.montant, coche: false,
+    })));
+    lignes = await sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`);
+  }
+
   _buLignes = lignes;
   _buTreso = treso[0] || null;
   _buAuto = {
@@ -52,7 +66,7 @@ async function renderBudget() {
   document.getElementById('root').innerHTML = shell(`
     <div class="topbar">
       <div><div class="page-title">Budget mensuel</div><div class="page-sub">${_buMois} 2026</div></div>
-      <button class="btn btn-primary" onclick="openLigneModal()">+ Ligne</button>
+      <button class="btn btn-primary" onclick="${_buType==='depense_fixe' ? 'openDepenseFixeModeleModal()' : 'openLigneModal()'}">+ ${_buType==='depense_fixe' ? 'Dépense fixe récurrente' : 'Ligne'}</button>
     </div>
     <div class="toolbar">
       <select onchange="_buMois=this.value;renderBudget()" style="background:var(--card2);color:var(--text);border:1px solid var(--border);padding:9px 12px;border-radius:10px;">
@@ -107,6 +121,28 @@ async function renderBudget() {
     <div class="page-sub" style="margin:-8px 0 10px;">Dépenses variables manuelles</div>
     ` : ''}
 
+    ${_buType === 'depense_fixe' ? `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Payé</th><th>Catégorie</th><th>Banque</th><th>Détail</th><th>Montant</th><th></th></tr></thead>
+        <tbody>
+          ${rowsType.length ? rowsType.map(l => `
+            <tr>
+              <td><input type="checkbox" ${l.coche ? 'checked' : ''} onchange="toggleCoche('${l.id}', this.checked)" style="width:18px;height:18px;"></td>
+              <td><b>${esc(l.categorie)}</b></td>
+              <td>${esc(l.banque) || '—'}</td>
+              <td>${esc(l.detail) || '—'}</td>
+              <td>${fmtEUR(l.montant)}</td>
+              <td style="display:flex;gap:6px;">
+                <button class="btn btn-ghost btn-sm" onclick="openDepenseFixeModeleModal('${l.modele_id || ''}', '${l.id}')">Éditer</button>
+                <button class="btn btn-ghost btn-sm" onclick="supprimerDepenseFixeModele('${l.modele_id || ''}', '${l.id}')">Suppr.</button>
+              </td>
+            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune dépense fixe — clique sur "+ Dépense fixe récurrente"</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="page-sub" style="margin-top:8px;">Reconduites automatiquement chaque mois. "Payé" est juste un suivi, ne change pas le total.</div>
+    ` : `
     <div class="table-wrap">
       <table>
         <thead><tr><th>Catégorie</th><th>Banque</th><th>Détail</th><th>Date</th><th>Montant</th><th></th></tr></thead>
@@ -123,9 +159,73 @@ async function renderBudget() {
         </tbody>
       </table>
     </div>
+    `}
   `);
 
   function sum(type) { return lignes.filter(l => l.type === type).reduce((s, l) => s + Number(l.montant || 0), 0); }
+}
+
+async function toggleCoche(id, coche) {
+  try { await sbUpdate('compta_budget_lignes', id, { coche }); const l = _buLignes.find(x => x.id === id); if (l) l.coche = coche; }
+  catch (e) { toast('Erreur : ' + e.message, 'err'); await renderBudget(); }
+}
+
+function openDepenseFixeModeleModal(modeleId, ligneId) {
+  const modele = modeleId ? _buModeles.find(m => m.id === modeleId) : null;
+  const ligne = ligneId ? _buLignes.find(l => l.id === ligneId) : null;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>${modele ? 'Modifier' : 'Nouvelle'} dépense fixe récurrente</h3>
+    <div class="field"><label>Catégorie</label><input id="df-cat" value="${esc(ligne?.categorie ?? modele?.categorie)}" placeholder="ex: Appartement, Assurance…"></div>
+    <div class="row2">
+      <div class="field"><label>Banque</label><select id="df-banque"><option value="">—</option>${BANQUES.map(b => `<option ${((ligne?.banque ?? modele?.banque)===b)?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Montant (€)</label><input id="df-montant" type="number" step="0.01" value="${ligne?.montant ?? modele?.montant ?? 0}"></div>
+    </div>
+    <div class="field"><label>Détail</label><input id="df-detail" value="${esc(ligne?.detail ?? modele?.detail)}" placeholder="ex: Loyer, Total-elec…"></div>
+    <div class="page-sub" style="margin-bottom:10px;">${modele ? "Modifier le montant/détail ici change ce mois-ci ET les mois suivants (c'est le modèle récurrent)." : "Sera reconduite automatiquement chaque mois à partir de maintenant."}</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveDepenseFixeModele('${modeleId || ''}', '${ligneId || ''}')">Enregistrer</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function saveDepenseFixeModele(modeleId, ligneId) {
+  const categorie = document.getElementById('df-cat').value.trim();
+  const banque = document.getElementById('df-banque').value || null;
+  const detail = document.getElementById('df-detail').value.trim() || null;
+  const montant = parseFloat(document.getElementById('df-montant').value) || 0;
+  if (!categorie) { toast('Catégorie requise', 'err'); return; }
+  try {
+    let mid = modeleId;
+    if (mid) {
+      await sbUpdate('compta_depenses_fixes_modeles', mid, { categorie, banque, detail, montant });
+    } else {
+      const created = await sbInsert('compta_depenses_fixes_modeles', { categorie, banque, detail, montant, actif: true });
+      mid = created[0].id;
+    }
+    if (ligneId) {
+      await sbUpdate('compta_budget_lignes', ligneId, { categorie, banque, detail, montant, modele_id: mid });
+    } else {
+      await sbInsert('compta_budget_lignes', { mois: _buMois, annee: 2026, type: 'depense_fixe', modele_id: mid, categorie, banque, detail, montant, coche: false });
+    }
+    document.querySelector('.modal-bg')?.remove();
+    toast('Dépense fixe enregistrée', 'ok');
+    await renderBudget();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function supprimerDepenseFixeModele(modeleId, ligneId) {
+  if (!confirm("Supprimer définitivement cette dépense fixe récurrente ? Elle n'apparaîtra plus les mois suivants.")) return;
+  try {
+    if (modeleId) await sbUpdate('compta_depenses_fixes_modeles', modeleId, { actif: false });
+    if (ligneId) await sbDelete('compta_budget_lignes', ligneId);
+    toast('Dépense fixe supprimée', 'ok');
+    await renderBudget();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function openLigneModal() {

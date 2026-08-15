@@ -112,10 +112,22 @@
   .checkbox-row { display: flex; align-items: center; gap: 8px; }
   .checkbox-row input { width: 18px; height: 18px; }
 
+  .nav-label-short { display: none; }
+
   @media (max-width: 860px) {
-    .sidebar { position: fixed; left: 0; bottom: 0; top: auto; width: 100%; height: auto; flex-direction: row; overflow-x: auto; padding: 8px; border-right: none; border-top: 1px solid var(--border); z-index: 50; }
+    html, body { overscroll-behavior-x: none; }
+    .sidebar {
+      position: fixed; left: 0; bottom: 0; top: auto; width: 100%; height: auto;
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 0;
+      padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+      border-right: none; border-top: 1px solid var(--border); z-index: 50;
+      touch-action: pan-y;
+    }
     .brand, .sidebar-foot { display: none; }
-    .nav-item { flex-direction: column; font-size: 10px; gap: 3px; padding: 8px 10px; white-space: nowrap; }
+    .nav-item { flex-direction: column; font-size: 9px; gap: 3px; padding: 7px 2px; white-space: nowrap; text-align: center; border-radius: 8px; }
+    .nav-item .ic { font-size: 15px; }
+    .nav-label-full { display: none; }
+    .nav-label-short { display: block; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
     .main { padding: 18px 16px 90px; }
     .row2, .row3 { grid-template-columns: 1fr; }
   }
@@ -143,13 +155,13 @@ function toast(msg, type) {
 }
 
 const NAV = [
-  { id: 'dashboard', label: 'Tableau de bord', ic: '◆' },
-  { id: 'clients', label: 'Clients', ic: '◉' },
-  { id: 'paiements', label: 'Paiements', ic: '€' },
-  { id: 'factures', label: 'Factures', ic: '▤' },
-  { id: 'budget', label: 'Budget mensuel', ic: '▦' },
-  { id: 'chimie', label: 'Chimie', ic: '⚗' },
-  { id: 'addict', label: 'Addict Nutrition', ic: '✦' },
+  { id: 'dashboard', label: 'Tableau de bord', short: 'Accueil', ic: '◆' },
+  { id: 'clients', label: 'Clients', short: 'Clients', ic: '◉' },
+  { id: 'paiements', label: 'Paiements', short: 'Paies', ic: '€' },
+  { id: 'factures', label: 'Factures', short: 'Factures', ic: '▤' },
+  { id: 'budget', label: 'Budget mensuel', short: 'Budget', ic: '▦' },
+  { id: 'chimie', label: 'Chimie', short: 'Chimie', ic: '⚗' },
+  { id: 'addict', label: 'Addict Nutrition', short: 'Addict', ic: '✦' },
 ];
 
 function setPage(p) { S.page = p; render(); }
@@ -165,7 +177,7 @@ function shell(innerHtml) {
   <div class="app">
     <div class="sidebar">
       <div class="brand"><span class="dot"></span> Compta</div>
-      ${NAV.map(n => `<div class="nav-item ${S.page === n.id ? 'active' : ''}" onclick="setPage('${n.id}')"><span class="ic">${n.ic}</span> ${n.label}</div>`).join('')}
+      ${NAV.map(n => `<div class="nav-item ${S.page === n.id ? 'active' : ''}" onclick="setPage('${n.id}')"><span class="ic">${n.ic}</span> <span class="nav-label-full">${n.label}</span><span class="nav-label-short">${n.short}</span></div>`).join('')}
       <div class="sidebar-foot"><button class="btn-logout" onclick="doLogout()">Déconnexion</button></div>
     </div>
     <div class="main">${innerHtml}</div>

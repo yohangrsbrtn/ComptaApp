@@ -93,6 +93,6 @@ function fmtEUR(n) { return (Number(n) || 0).toLocaleString('fr-FR', { minimumFr
 function fmtDate(d) { if (!d) return ''; const dt = new Date(d); return dt.toLocaleDateString('fr-FR'); }
 function uid() { return crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2); }
 
-const MOIS = ['JANVIER', 'FÉVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOÛT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DÉCEMBRE'];
+const MOIS = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'];
 const MOIS_NUM = { JANVIER: '01', 'FÉVRIER': '02', FEVRIER: '02', MARS: '03', AVRIL: '04', MAI: '05', JUIN: '06', JUILLET: '07', 'AOÛT': '08', AOUT: '08', SEPTEMBRE: '09', OCTOBRE: '10', NOVEMBRE: '11', 'DÉCEMBRE': '12', DECEMBRE: '12' };
 function moisActuel() { return MOIS[new Date().getMonth()]; }
