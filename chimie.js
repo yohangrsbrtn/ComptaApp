@@ -26,7 +26,7 @@ async function renderChimie() {
       <div class="pill-tab ${_chTab==='clients'?'active':''}" onclick="_chTab='clients';renderChimie()">Commandes clients</div>
       <div class="pill-tab ${_chTab==='fournisseur'?'active':''}" onclick="_chTab='fournisseur';renderChimie()">Commandes fournisseur</div>
       <div class="pill-tab ${_chTab==='stock'?'active':''}" onclick="_chTab='stock';renderChimie()">Stock</div>
-      <div class="pill-tab ${_chTab==='recap'?'active':''}" onclick="_chTab='recap';renderChimie()">Récap mensuel</div>
+      <div class="pill-tab ${_chTab==='benefices'?'active':''}" onclick="_chTab='benefices';renderChimie()">Bénéfices</div>
     </div>
     <div id="ch-body"></div>
   `);
@@ -36,57 +36,100 @@ async function renderChimie() {
   else if (_chTab === 'clients') body.innerHTML = _tplClients();
   else if (_chTab === 'fournisseur') body.innerHTML = _tplFournisseur();
   else if (_chTab === 'stock') body.innerHTML = _tplStock();
-  else { body.innerHTML = `<div class="empty">Chargement…</div>`; await _renderRecap(); }
+  else { body.innerHTML = `<div class="empty">Chargement…</div>`; await _renderBenefices(); }
 }
 
-async function _renderRecap() {
+// ── BÉNÉFICES — regroupés par jour / mois / client, colonnes triables ──
+let _chBenefGroupBy = 'mois';
+let _chBenefSort = { col: 'benefice', dir: 'desc' };
+
+async function _renderBenefices() {
   const [ventesAll, achatsAll] = await Promise.all([
-    sbSelect('compta_ventes', 'annulee=eq.false&select=date,total_vente,total_achat'),
+    sbSelect('compta_ventes', 'annulee=eq.false&select=date,client,total_vente,total_achat'),
     sbSelect('compta_commandes_fournisseur', 'recue=eq.true&select=date_reception,quantite,prix_achat_unitaire'),
   ]);
-  const parMois = {};
-  MOIS.forEach(m => parMois[m] = { vente: 0, achatVente: 0, achatFourn: 0 });
+
+  const groupes = {};
+  const keyOf = d => {
+    if (_chBenefGroupBy === 'jour') return { key: d, sortKey: new Date(d).getTime() };
+    const dt = new Date(d);
+    return { key: `${MOIS[dt.getMonth()]} ${dt.getFullYear()}`, sortKey: dt.getFullYear() * 100 + dt.getMonth() };
+  };
   ventesAll.forEach(v => {
-    const m = MOIS[new Date(v.date).getMonth()];
-    if (!parMois[m]) return;
-    parMois[m].vente += Number(v.total_vente || 0);
-    parMois[m].achatVente += Number(v.total_achat || 0);
+    const { key: k, sortKey } = _chBenefGroupBy === 'client' ? { key: v.client || '— Sans client —', sortKey: null } : keyOf(v.date);
+    const g = groupes[k] = groupes[k] || { label: k, sortKey, nb: 0, vente: 0, achat: 0, achatFourn: 0 };
+    g.nb++; g.vente += Number(v.total_vente || 0); g.achat += Number(v.total_achat || 0);
   });
-  achatsAll.forEach(c => {
-    if (!c.date_reception) return;
-    const m = MOIS[new Date(c.date_reception).getMonth()];
-    if (!parMois[m]) return;
-    parMois[m].achatFourn += Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0);
+
+  if (_chBenefGroupBy !== 'client') {
+    achatsAll.forEach(c => {
+      if (!c.date_reception) return;
+      const { key: k, sortKey } = keyOf(c.date_reception);
+      const g = groupes[k] = groupes[k] || { label: k, sortKey, nb: 0, vente: 0, achat: 0, achatFourn: 0 };
+      g.achatFourn += Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0);
+    });
+  }
+
+  let rows = Object.values(groupes).map(g => ({ ...g, benefice: g.vente - g.achat }));
+  const { col, dir } = _chBenefSort;
+  rows.sort((a, b) => {
+    if (col === 'label') {
+      if (a.sortKey != null && b.sortKey != null) return dir === 'asc' ? a.sortKey - b.sortKey : b.sortKey - a.sortKey;
+      return dir === 'asc' ? String(a.label).localeCompare(b.label) : String(b.label).localeCompare(a.label);
+    }
+    return dir === 'asc' ? a[col] - b[col] : b[col] - a[col];
   });
-  const totVente = MOIS.reduce((s, m) => s + parMois[m].vente, 0);
-  const totAchatFourn = MOIS.reduce((s, m) => s + parMois[m].achatFourn, 0);
-  const totBenef = MOIS.reduce((s, m) => s + (parMois[m].vente - parMois[m].achatVente), 0);
+
+  const totVente = rows.reduce((s, r) => s + r.vente, 0);
+  const totAchatFourn = rows.reduce((s, r) => s + r.achatFourn, 0);
+  const totBenef = rows.reduce((s, r) => s + r.benefice, 0);
+
+  const th = (col, label) => {
+    const active = _chBenefSort.col === col;
+    const arrow = active ? (_chBenefSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th style="cursor:pointer;user-select:none;" onclick="_chBenefTri('${col}')">${label}${arrow}</th>`;
+  };
 
   document.getElementById('ch-body').innerHTML = `
+    <div class="pill-tabs" style="margin-bottom:16px;">
+      <div class="pill-tab ${_chBenefGroupBy==='jour'?'active':''}" onclick="_chBenefGroupBy='jour';renderChimie()">Par jour</div>
+      <div class="pill-tab ${_chBenefGroupBy==='mois'?'active':''}" onclick="_chBenefGroupBy='mois';renderChimie()">Par mois</div>
+      <div class="pill-tab ${_chBenefGroupBy==='client'?'active':''}" onclick="_chBenefGroupBy='client';renderChimie()">Par client</div>
+    </div>
     <div class="grid cards4" style="margin-bottom:18px;">
-      <div class="card kpi"><div class="label">Achats fournisseur (année)</div><div class="value">${fmtEUR(totAchatFourn)}</div></div>
-      <div class="card kpi"><div class="label">Ventes (année)</div><div class="value pos">${fmtEUR(totVente)}</div></div>
-      <div class="card kpi"><div class="label">Bénéfice (année)</div><div class="value pos">${fmtEUR(totBenef)}</div></div>
+      ${_chBenefGroupBy !== 'client' ? `<div class="card kpi"><div class="label">Achats fournisseur</div><div class="value">${fmtEUR(totAchatFourn)}</div></div>` : ''}
+      <div class="card kpi"><div class="label">Ventes</div><div class="value pos">${fmtEUR(totVente)}</div></div>
+      <div class="card kpi"><div class="label">Bénéfice</div><div class="value pos">${fmtEUR(totBenef)}</div></div>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Mois</th><th>Achats fournisseur (réceptionnés)</th><th>Ventes</th><th>Bénéfice</th></tr></thead>
+        <thead><tr>
+          ${th('label', _chBenefGroupBy === 'jour' ? 'Date' : _chBenefGroupBy === 'mois' ? 'Mois' : 'Client')}
+          ${th('nb', 'Nb ventes')}
+          ${_chBenefGroupBy !== 'client' ? th('achatFourn', 'Achats fournisseur') : ''}
+          ${th('vente', 'Ventes')}
+          ${th('benefice', 'Bénéfice')}
+        </tr></thead>
         <tbody>
-          ${MOIS.map(m => {
-            const d = parMois[m];
-            if (!d.vente && !d.achatFourn) return '';
-            return `<tr>
-              <td><b>${m}</b></td>
-              <td>${fmtEUR(d.achatFourn)}</td>
-              <td>${fmtEUR(d.vente)}</td>
-              <td style="color:var(--accent2)">${fmtEUR(d.vente - d.achatVente)}</td>
-            </tr>`;
-          }).join('') || `<tr><td colspan="4"><div class="empty">Aucune donnée</div></td></tr>`}
+          ${rows.length ? rows.map(r => `
+            <tr>
+              <td><b>${esc(_chBenefGroupBy === 'jour' ? fmtDate(r.label) : r.label)}</b></td>
+              <td>${r.nb}</td>
+              ${_chBenefGroupBy !== 'client' ? `<td>${fmtEUR(r.achatFourn)}</td>` : ''}
+              <td>${fmtEUR(r.vente)}</td>
+              <td style="color:${r.benefice>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(r.benefice)}</td>
+            </tr>`).join('') : `<tr><td colspan="5"><div class="empty">Aucune donnée</div></td></tr>`}
         </tbody>
       </table>
     </div>
-    <div class="page-sub" style="margin-top:8px;">Un achat compte dans le mois où il est réceptionné (pas où il est commandé).</div>
+    <div class="page-sub" style="margin-top:8px;">Clique un en-tête de colonne pour trier. Un achat fournisseur compte à sa date de réception.</div>
   `;
+}
+
+function _chBenefTri(col) {
+  if (_chBenefSort.col === col) _chBenefSort.dir = _chBenefSort.dir === 'asc' ? 'desc' : 'asc';
+  else _chBenefSort = { col, dir: 'desc' };
+  _renderBenefices();
 }
 
 // ── VENTES ───────────────────────────────────────────────────────────
