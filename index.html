@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Compta</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b1220">
+<link rel="icon" href="icons/icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0b1220;
+    --bg2: #0f1830;
+    --card: #131d36;
+    --card2: #172144;
+    --border: #223058;
+    --text: #eef2ff;
+    --muted: #8b96b8;
+    --accent: #10b981;
+    --accent2: #34d399;
+    --gold: #f5c451;
+    --red: #f87171;
+    --blue: #60a5fa;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  body { min-height: 100vh; background: radial-gradient(1200px 600px at 20% -10%, #142250 0%, transparent 60%), radial-gradient(1000px 500px at 100% 0%, #0f2b26 0%, transparent 55%), var(--bg); }
+  input, select, textarea, button { font-family: inherit; font-size: 16px; }
+  a { color: inherit; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+
+  .app { display: flex; min-height: 100vh; }
+  .sidebar { width: 230px; flex-shrink: 0; background: rgba(15,24,48,.7); backdrop-filter: blur(12px); border-right: 1px solid var(--border); padding: 22px 14px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 20px; font-weight: 800; font-size: 18px; letter-spacing: .3px; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--gold)); box-shadow: 0 0 14px var(--accent); }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 10px; color: var(--muted); cursor: pointer; font-weight: 600; font-size: 14px; transition: .15s; user-select: none; }
+  .nav-item:hover { background: var(--card); color: var(--text); }
+  .nav-item.active { background: linear-gradient(135deg, rgba(16,185,129,.18), rgba(52,211,153,.06)); color: var(--accent2); box-shadow: inset 0 0 0 1px rgba(16,185,129,.25); }
+  .nav-item .ic { width: 18px; text-align: center; }
+  .sidebar-foot { margin-top: auto; padding: 10px 12px; }
+  .btn-logout { width: 100%; padding: 10px; border-radius: 10px; background: transparent; border: 1px solid var(--border); color: var(--muted); cursor: pointer; }
+  .btn-logout:hover { color: var(--red); border-color: var(--red); }
+
+  .main { flex: 1; min-width: 0; padding: 28px 34px 60px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .page-title { font-size: 24px; font-weight: 800; }
+  .page-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  .grid { display: grid; gap: 16px; }
+  .cards4 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .card { background: linear-gradient(180deg, var(--card2), var(--card)); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+  .card.kpi { position: relative; overflow: hidden; }
+  .card.kpi .label { color: var(--muted); font-size: 12.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+  .card.kpi .value { font-size: 26px; font-weight: 800; margin-top: 8px; }
+  .card.kpi .value.pos { color: var(--accent2); }
+  .card.kpi .value.neg { color: var(--red); }
+  .card.kpi .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .3px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 12px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  .table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--card); }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border-radius: 10px; border: none; cursor: pointer; font-weight: 700; font-size: 14px; transition: .15s; }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), #0ea371); color: #06251b; }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-ghost { background: var(--card2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .btn-danger { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.3); }
+  .btn-sm { padding: 6px 10px; font-size: 12.5px; border-radius: 8px; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .badge-green { background: rgba(16,185,129,.15); color: var(--accent2); }
+  .badge-red { background: rgba(248,113,113,.15); color: var(--red); }
+  .badge-gold { background: rgba(245,196,81,.15); color: var(--gold); }
+  .badge-blue { background: rgba(96,165,250,.15); color: var(--blue); }
+  .badge-muted { background: rgba(139,150,184,.15); color: var(--muted); }
+
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  .field input, .field select, .field textarea { background: var(--bg2); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 10px; outline: none; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  .modal-bg { position: fixed; inset: 0; background: rgba(4,8,20,.65); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+  .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; width: 100%; max-width: 520px; max-height: 88vh; overflow-y: auto; }
+  .modal h3 { margin: 0 0 16px; font-size: 18px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .search { flex: 1; min-width: 180px; }
+  .search input { width: 100%; }
+  .pill-tabs { display: flex; gap: 6px; background: var(--card); border: 1px solid var(--border); padding: 4px; border-radius: 12px; }
+  .pill-tab { padding: 7px 14px; border-radius: 9px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .pill-tab.active { background: var(--accent); color: #06251b; }
+
+  .empty { text-align: center; padding: 50px 20px; color: var(--muted); }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--card2); border: 1px solid var(--border); padding: 12px 18px; border-radius: 12px; z-index: 200; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+  .toast.err { border-color: var(--red); color: var(--red); }
+  .toast.ok { border-color: var(--accent); color: var(--accent2); }
+
+  .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .login-card { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 32px; }
+  .login-card .brand { justify-content: center; padding-bottom: 26px; font-size: 22px; }
+
+  .checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .checkbox-row input { width: 18px; height: 18px; }
+
+  @media (max-width: 860px) {
+    .sidebar { position: fixed; left: 0; bottom: 0; top: auto; width: 100%; height: auto; flex-direction: row; overflow-x: auto; padding: 8px; border-right: none; border-top: 1px solid var(--border); z-index: 50; }
+    .brand, .sidebar-foot { display: none; }
+    .nav-item { flex-direction: column; font-size: 10px; gap: 3px; padding: 8px 10px; white-space: nowrap; }
+    .main { padding: 18px 16px 90px; }
+    .row2, .row3 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="api.js"></script>
+<script src="clients.js"></script>
+<script src="paiements.js"></script>
+<script src="factures.js"></script>
+<script src="budget.js"></script>
+<script src="chimie.js"></script>
+<script src="addict.js"></script>
+<script>
+const S = { page: 'dashboard', clients: [], loading: false };
+
+function toast(msg, type) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (type ? ' ' + type : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+
+const NAV = [
+  { id: 'dashboard', label: 'Tableau de bord', ic: '◆' },
+  { id: 'clients', label: 'Clients', ic: '◉' },
+  { id: 'paiements', label: 'Paiements', ic: '€' },
+  { id: 'factures', label: 'Factures', ic: '▤' },
+  { id: 'budget', label: 'Budget mensuel', ic: '▦' },
+  { id: 'chimie', label: 'Chimie', ic: '⚗' },
+  { id: 'addict', label: 'Addict Nutrition', ic: '✦' },
+];
+
+function setPage(p) { S.page = p; render(); }
+
+async function loadClients(force) {
+  if (S.clients.length && !force) return S.clients;
+  S.clients = await sbSelect('compta_clients', 'select=*&order=nom.asc');
+  return S.clients;
+}
+
+function shell(innerHtml) {
+  return `
+  <div class="app">
+    <div class="sidebar">
+      <div class="brand"><span class="dot"></span> Compta</div>
+      ${NAV.map(n => `<div class="nav-item ${S.page === n.id ? 'active' : ''}" onclick="setPage('${n.id}')"><span class="ic">${n.ic}</span> ${n.label}</div>`).join('')}
+      <div class="sidebar-foot"><button class="btn-logout" onclick="doLogout()">Déconnexion</button></div>
+    </div>
+    <div class="main">${innerHtml}</div>
+  </div>`;
+}
+
+function doLogout() { logout(); render(); }
+
+function renderLogin() {
+  document.getElementById('root').innerHTML = `
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="brand"><span class="dot"></span> Compta</div>
+      <div class="field"><label>Email</label><input id="li-email" type="email" value="yohangrsbrtn@gmail.com"></div>
+      <div class="field"><label>Mot de passe</label><input id="li-pass" type="password" placeholder="••••••••"></div>
+      <div id="li-err" style="color:var(--red);font-size:13px;margin-bottom:10px;"></div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="doLogin()">Se connecter</button>
+    </div>
+  </div>`;
+  document.getElementById('li-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+}
+
+async function doLogin() {
+  const email = document.getElementById('li-email').value.trim();
+  const pass = document.getElementById('li-pass').value;
+  const err = document.getElementById('li-err');
+  err.textContent = '';
+  try {
+    await login(email, pass);
+    await render();
+  } catch (e) { err.textContent = e.message; }
+}
+
+async function renderDashboard() {
+  await loadClients();
+  const mois = moisActuel();
+  const [paiements, factures] = await Promise.all([
+    sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(mois)}&annee=eq.2026`),
+    sbSelect('compta_factures', 'select=montant_total,mois&annee=eq.2026'),
+  ]);
+  const totalMoisSuivi = paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0);
+  const totalMoisSeance = paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0);
+  const actifs = S.clients.filter(c => c.statut !== 'ancien').length;
+  const totalFactureAnnee = factures.reduce((s, f) => s + Number(f.montant_total || 0), 0);
+
+  document.getElementById('root').innerHTML = shell(`
+    <div class="topbar">
+      <div><div class="page-title">Tableau de bord</div><div class="page-sub">${mois} 2026</div></div>
+    </div>
+    <div class="grid cards4" style="margin-bottom:22px;">
+      <div class="card kpi"><div class="label">Clients actifs</div><div class="value">${actifs}</div><div class="sub">${S.clients.length} au total</div></div>
+      <div class="card kpi"><div class="label">Suivis encaissés (${mois.slice(0,4)})</div><div class="value pos">${fmtEUR(totalMoisSuivi)}</div></div>
+      <div class="card kpi"><div class="label">Séances encaissées</div><div class="value pos">${fmtEUR(totalMoisSeance)}</div></div>
+      <div class="card kpi"><div class="label">Total facturé 2026</div><div class="value">${fmtEUR(totalFactureAnnee)}</div></div>
+    </div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
+      <div class="card" style="cursor:pointer;" onclick="setPage('paiements')"><div style="font-weight:700;margin-bottom:6px;">€ Paiements du mois</div><div class="page-sub">Cocher les encaissements, générer les factures</div></div>
+      <div class="card" style="cursor:pointer;" onclick="setPage('clients')"><div style="font-weight:700;margin-bottom:6px;">◉ Base clients</div><div class="page-sub">Gérer coaching, tarifs, adresses</div></div>
+      <div class="card" style="cursor:pointer;" onclick="setPage('budget')"><div style="font-weight:700;margin-bottom:6px;">▦ Budget mensuel</div><div class="page-sub">Revenus, dépenses, épargne, trésorerie</div></div>
+    </div>
+  `);
+}
+
+async function render() {
+  if (!isLoggedIn()) { renderLogin(); return; }
+  try {
+    if (S.page === 'dashboard') await renderDashboard();
+    else if (S.page === 'clients') await renderClients();
+    else if (S.page === 'paiements') await renderPaiements();
+    else if (S.page === 'factures') await renderFactures();
+    else if (S.page === 'budget') await renderBudget();
+    else if (S.page === 'chimie') await renderChimie();
+    else if (S.page === 'addict') await renderAddict();
+  } catch (e) {
+    console.error(e);
+    toast('Erreur : ' + e.message, 'err');
+  }
+}
+
+render();
+</script>
+</body>
+</html>
