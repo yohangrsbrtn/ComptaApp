@@ -102,6 +102,8 @@
 
   .empty { text-align: center; padding: 50px 20px; color: var(--muted); }
   .toast { position: fixed; bottom: 24px; right: 24px; background: var(--card2); border: 1px solid var(--border); padding: 12px 18px; border-radius: 12px; z-index: 200; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+  .mobile-account-fab { display: none; position: fixed; top: 14px; right: 14px; z-index: 60; gap: 8px; }
+  .mobile-account-fab button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--card2); color: var(--muted); font-size: 15px; }
   .toast.err { border-color: var(--red); color: var(--red); }
   .toast.ok { border-color: var(--accent); color: var(--accent2); }
 
@@ -130,6 +132,7 @@
     .nav-label-short { display: block; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
     .main { padding: 18px 16px 90px; }
     .row2, .row3 { grid-template-columns: 1fr; }
+    .mobile-account-fab { display: flex; }
   }
 </style>
 </head>
@@ -178,13 +181,57 @@ function shell(innerHtml) {
     <div class="sidebar">
       <div class="brand"><span class="dot"></span> Compta</div>
       ${NAV.map(n => `<div class="nav-item ${S.page === n.id ? 'active' : ''}" onclick="setPage('${n.id}')"><span class="ic">${n.ic}</span> <span class="nav-label-full">${n.label}</span><span class="nav-label-short">${n.short}</span></div>`).join('')}
-      <div class="sidebar-foot"><button class="btn-logout" onclick="doLogout()">Déconnexion</button></div>
+      <div class="sidebar-foot" style="display:flex;flex-direction:column;gap:8px;">
+        <button class="btn-logout" onclick="openChangerMdpModal()" style="color:var(--muted);">⚙ Changer le mot de passe</button>
+        <button class="btn-logout" onclick="doLogout()">Déconnexion</button>
+      </div>
     </div>
     <div class="main">${innerHtml}</div>
+    <div class="mobile-account-fab">
+      <button onclick="openChangerMdpModal()" title="Changer le mot de passe">⚙</button>
+      <button onclick="doLogout()" title="Déconnexion">⏻</button>
+    </div>
   </div>`;
 }
 
 function doLogout() { logout(); render(); }
+
+function openChangerMdpModal() {
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Changer le mot de passe</h3>
+    <div class="field"><label>Nouveau mot de passe</label><input id="mdp-nouveau" type="password" placeholder="Au moins 8 caractères"></div>
+    <div class="field"><label>Confirmer le nouveau mot de passe</label><input id="mdp-confirm" type="password"></div>
+    <div id="mdp-err" style="color:var(--red);font-size:13px;margin-bottom:10px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="changerMotDePasse()">Enregistrer</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function changerMotDePasse() {
+  const nouveau = document.getElementById('mdp-nouveau').value;
+  const confirm = document.getElementById('mdp-confirm').value;
+  const errEl = document.getElementById('mdp-err');
+  errEl.textContent = '';
+  if (nouveau.length < 8) { errEl.textContent = 'Le mot de passe doit faire au moins 8 caractères.'; return; }
+  if (nouveau !== confirm) { errEl.textContent = 'Les deux mots de passe ne correspondent pas.'; return; }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: 'PUT',
+      headers: supaHeaders(),
+      body: JSON.stringify({ password: nouveau }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.msg || data.error_description || 'Erreur');
+    document.querySelector('.modal-bg')?.remove();
+    toast('Mot de passe changé', 'ok');
+  } catch (e) { errEl.textContent = e.message; }
+}
 
 function renderLogin() {
   document.getElementById('root').innerHTML = `
