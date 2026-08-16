@@ -194,14 +194,28 @@ async function annulerVente(id) {
 }
 
 // ── STOCK ────────────────────────────────────────────────────────────
+let _chStockSort = { col: 'nom', dir: 'asc' };
+
 function _tplStock() {
+  const { col, dir } = _chStockSort;
+  const sorted = [..._chProduits].sort((a, b) => {
+    let va = a[col], vb = b[col];
+    if (col === 'stock_reel') return dir === 'asc' ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+    va = (va || '').toString().toLowerCase(); vb = (vb || '').toString().toLowerCase();
+    return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+  const th = (c, label) => {
+    const active = col === c;
+    const arrow = active ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th style="cursor:pointer;user-select:none;" onclick="_chStockTri('${c}')">${label}${arrow}</th>`;
+  };
   return `
     <div class="toolbar"><div></div><button class="btn btn-primary" onclick="openProduitModal()">+ Produit</button></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Produit</th><th>Marque</th><th>Type</th><th>Prix achat</th><th>Prix vente</th><th>Stock</th><th></th></tr></thead>
+        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th></th></tr></thead>
         <tbody>
-          ${_chProduits.length ? _chProduits.map(p => `
+          ${sorted.length ? sorted.map(p => `
             <tr>
               <td><b>${esc(p.nom)}</b></td>
               <td>${esc(p.marque) || '—'}</td>
@@ -214,6 +228,12 @@ function _tplStock() {
         </tbody>
       </table>
     </div>`;
+}
+
+function _chStockTri(col) {
+  if (_chStockSort.col === col) _chStockSort.dir = _chStockSort.dir === 'asc' ? 'desc' : 'asc';
+  else _chStockSort = { col, dir: 'asc' };
+  document.getElementById('ch-body').innerHTML = _tplStock();
 }
 
 function openProduitModal(id) {
@@ -276,14 +296,19 @@ function _tplFournisseur() {
       <div class="value">${fmtEUR(_chDepenseMois)}</div>
       <div class="sub">Compté au moment de la réception, pas de la commande</div>
     </div>
-    <div class="toolbar"><div></div><button class="btn btn-primary" onclick="openCmdFournisseurModal()">+ Commande</button></div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="ouvrirReceptionModal(null, true)">Réceptionner la sélection</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-primary" onclick="openCmdFournisseurModal()">+ Commande</button>
+    </div>
     <div class="page-sub" style="margin:-6px 0 10px;">En attente de réception — le stock et la dépense ne bougent qu'après clic sur "Réceptionner"</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Produit</th><th>Marque</th><th>Qté</th><th>Prix achat unit.</th><th>Total</th><th></th></tr></thead>
+        <thead><tr><th><input type="checkbox" onchange="_chToggleAllFournisseur(this.checked)" style="width:18px;height:18px;"></th><th>Produit</th><th>Marque</th><th>Qté</th><th>Prix achat unit.</th><th>Total</th><th></th></tr></thead>
         <tbody>
           ${_chFournisseur.length ? _chFournisseur.map(c => `
             <tr>
+              <td><input type="checkbox" class="ch-cf-sel" value="${c.id}" style="width:18px;height:18px;"></td>
               <td><b>${esc(c.produit_nom)}</b></td>
               <td>${esc(c.marque) || '—'}</td>
               <td>${c.quantite}</td>
@@ -293,10 +318,14 @@ function _tplFournisseur() {
                 <button class="btn btn-primary btn-sm" onclick="ouvrirReceptionModal('${c.id}')">Réceptionner</button>
                 <button class="btn btn-ghost btn-sm" onclick="deleteCmdFournisseur('${c.id}')">Suppr.</button>
               </td>
-            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune commande en attente</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucune commande en attente</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
+}
+
+function _chToggleAllFournisseur(checked) {
+  document.querySelectorAll('.ch-cf-sel').forEach(el => el.checked = checked);
 }
 
 function openCmdFournisseurModal() {
@@ -361,41 +390,60 @@ async function deleteCmdFournisseur(id) {
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-function ouvrirReceptionModal(id) {
-  const c = _chFournisseur.find(x => x.id === id);
-  if (!c) return;
+function ouvrirReceptionModal(id, groupe) {
+  let ids = [];
+  let titre, sousTitre;
+  if (groupe) {
+    ids = [...document.querySelectorAll('.ch-cf-sel:checked')].map(el => el.value);
+    if (!ids.length) { toast('Sélectionne au moins une commande', 'err'); return; }
+    const lignes = _chFournisseur.filter(c => ids.includes(c.id));
+    const total = lignes.reduce((s, c) => s + c.quantite * c.prix_achat_unitaire, 0);
+    titre = `Réceptionner ${lignes.length} commande(s)`;
+    sousTitre = `${lignes.map(l => esc(l.produit_nom)).join(', ')} — total ${fmtEUR(total)}`;
+  } else {
+    const c = _chFournisseur.find(x => x.id === id);
+    if (!c) return;
+    ids = [id];
+    titre = `Réceptionner — ${esc(c.produit_nom)}`;
+    sousTitre = `${c.quantite} × ${fmtEUR(c.prix_achat_unitaire)} = ${fmtEUR(c.quantite * c.prix_achat_unitaire)}`;
+  }
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
-    <h3>Réceptionner — ${esc(c.produit_nom)}</h3>
-    <div class="page-sub" style="margin-bottom:14px;">${c.quantite} × ${fmtEUR(c.prix_achat_unitaire)} = ${fmtEUR(c.quantite * c.prix_achat_unitaire)}</div>
+    <h3>${titre}</h3>
+    <div class="page-sub" style="margin-bottom:14px;">${sousTitre}</div>
     <div class="field"><label>Date de réception</label><input id="rc-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div class="page-sub" style="margin-bottom:10px;">Détermine dans quel mois cette dépense et ce stock sont comptabilisés.</div>
+    <div class="page-sub" style="margin-bottom:10px;">Détermine dans quel mois cette dépense et ce stock sont comptabilisés. Même date appliquée à toute la sélection.</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
-      <button class="btn btn-primary" onclick="receptionnerCommande('${id}')">Confirmer la réception</button>
+      <button class="btn btn-primary" onclick='receptionnerCommandes(${JSON.stringify(ids)})'>Confirmer la réception</button>
     </div>
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
 }
 
-async function receptionnerCommande(id) {
-  const c = _chFournisseur.find(x => x.id === id);
-  if (!c) return;
+async function receptionnerCommandes(ids) {
   const dateReception = document.getElementById('rc-date')?.value || new Date().toISOString().slice(0, 10);
   try {
-    let produit = c.produit_id ? _chProduits.find(p => p.id === c.produit_id) : _chProduits.find(p => p.nom === c.produit_nom);
-    if (produit) {
-      await sbUpdate('compta_produits', produit.id, { stock_reel: Number(produit.stock_reel || 0) + Number(c.quantite || 0) });
-    } else {
-      await sbInsert('compta_produits', { nom: c.produit_nom, marque: c.marque, prix_achat: c.prix_achat_unitaire, stock_reel: c.quantite });
+    for (const id of ids) {
+      const c = _chFournisseur.find(x => x.id === id);
+      if (!c) continue;
+      let produit = c.produit_id ? _chProduits.find(p => p.id === c.produit_id) : _chProduits.find(p => p.nom === c.produit_nom);
+      if (produit) {
+        const nouveauStock = Number(produit.stock_reel || 0) + Number(c.quantite || 0);
+        await sbUpdate('compta_produits', produit.id, { stock_reel: nouveauStock });
+        produit.stock_reel = nouveauStock;
+      } else {
+        produit = (await sbInsert('compta_produits', { nom: c.produit_nom, marque: c.marque, prix_achat: c.prix_achat_unitaire, stock_reel: c.quantite }))[0];
+        _chProduits.push(produit);
+      }
+      // Réception = statut réel de la dépense (pas la commande) : le stock ET la dépense
+      // mensuelle ne bougent qu'ici, jamais à la simple création de la commande.
+      await sbUpdate('compta_commandes_fournisseur', id, { recue: true, date_reception: dateReception });
     }
-    // Réception = statut réel de la dépense (pas la commande) : le stock ET la dépense
-    // mensuelle ne bougent qu'ici, jamais à la simple création de la commande.
-    await sbUpdate('compta_commandes_fournisseur', id, { recue: true, date_reception: dateReception });
     document.querySelector('.modal-bg')?.remove();
-    toast('Stock mis à jour et dépense enregistrée', 'ok');
+    toast(`${ids.length} commande(s) réceptionnée(s), stock mis à jour`, 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }

@@ -62,6 +62,14 @@ async function renderBudget() {
   const resultat = totRevenu - totFixe - totVar - totEparg - totCredit;
 
   const rowsType = _buLignes.filter(l => l.type === _buType);
+  if (_buType !== 'depense_fixe') {
+    rowsType.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return new Date(b.date) - new Date(a.date);
+    });
+  }
 
   document.getElementById('root').innerHTML = shell(`
     <div class="topbar">
@@ -154,7 +162,10 @@ async function renderBudget() {
               <td>${esc(l.detail) || '—'}</td>
               <td>${fmtDate(l.date) || '—'}</td>
               <td>${fmtEUR(l.montant)}</td>
-              <td><button class="btn btn-ghost btn-sm" onclick="deleteLigne('${l.id}')">Suppr.</button></td>
+              <td style="display:flex;gap:6px;">
+                <button class="btn btn-ghost btn-sm" onclick="openLigneModal('${l.id}')">Éditer</button>
+                <button class="btn btn-ghost btn-sm" onclick="deleteLigne('${l.id}')">Suppr.</button>
+              </td>
             </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune ligne manuelle</div></td></tr>`}
         </tbody>
       </table>
@@ -228,26 +239,28 @@ async function supprimerDepenseFixeModele(modeleId, ligneId) {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-function openLigneModal() {
+function openLigneModal(ligneId) {
+  const l = ligneId ? _buLignes.find(x => x.id === ligneId) : null;
+  const type = l?.type || _buType;
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
-    <h3>Nouvelle ligne — ${_buMois}</h3>
+    <h3>${l ? 'Modifier' : 'Nouvelle'} ligne — ${_buMois}</h3>
     <div class="field"><label>Type</label>
-      <select id="lg-type" onchange="_lgReloadCat()">
-        ${Object.keys(TYPE_LABELS).map(t => `<option value="${t}" ${t===_buType?'selected':''}>${TYPE_LABELS[t]}</option>`).join('')}
+      <select id="lg-type" onchange="_lgReloadCat()" ${l ? 'disabled' : ''}>
+        ${Object.keys(TYPE_LABELS).map(t => `<option value="${t}" ${t===type?'selected':''}>${TYPE_LABELS[t]}</option>`).join('')}
       </select>
     </div>
-    <div class="field"><label>Catégorie</label><select id="lg-cat"></select></div>
+    <div class="field"><label>Catégorie</label><input id="lg-cat" list="lg-cat-list" value="${esc(l?.categorie)}"><datalist id="lg-cat-list"></datalist></div>
     <div class="row2">
-      <div class="field"><label>Banque</label><select id="lg-banque"><option value="">—</option>${BANQUES.map(b => `<option>${b}</option>`).join('')}</select></div>
-      <div class="field"><label>Montant (€)</label><input id="lg-montant" type="number" step="0.01" value="0"></div>
+      <div class="field"><label>Banque</label><select id="lg-banque"><option value="">—</option>${BANQUES.map(b => `<option ${l?.banque===b?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Montant (€)</label><input id="lg-montant" type="number" step="0.01" value="${l?.montant ?? 0}"></div>
     </div>
-    <div class="field"><label>Détail</label><input id="lg-detail" placeholder="ex: Loyer, Total-elec…"></div>
-    <div class="field"><label>Date</label><input id="lg-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="field"><label>Détail</label><input id="lg-detail" value="${esc(l?.detail)}" placeholder="ex: Loyer, Total-elec…"></div>
+    <div class="field"><label>Date</label><input id="lg-date" type="date" value="${l?.date ? l.date.slice(0,10) : new Date().toISOString().slice(0,10)}"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
-      <button class="btn btn-primary" onclick="saveLigne()">Enregistrer</button>
+      <button class="btn btn-primary" onclick="saveLigne('${ligneId || ''}')">Enregistrer</button>
     </div>
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
@@ -257,21 +270,23 @@ function openLigneModal() {
 
 function _lgReloadCat() {
   const type = document.getElementById('lg-type').value;
-  document.getElementById('lg-cat').innerHTML = CATEGORIES[type].map(c => `<option>${c}</option>`).join('');
+  document.getElementById('lg-cat-list').innerHTML = CATEGORIES[type].map(c => `<option value="${c}">`).join('');
 }
 
-async function saveLigne() {
+async function saveLigne(ligneId) {
   const body = {
     mois: _buMois, annee: 2026,
     type: document.getElementById('lg-type').value,
-    categorie: document.getElementById('lg-cat').value,
+    categorie: document.getElementById('lg-cat').value.trim(),
     banque: document.getElementById('lg-banque').value || null,
     detail: document.getElementById('lg-detail').value.trim() || null,
     montant: parseFloat(document.getElementById('lg-montant').value) || 0,
     date: document.getElementById('lg-date').value || null,
   };
+  if (!body.categorie) { toast('Catégorie requise', 'err'); return; }
   try {
-    await sbInsert('compta_budget_lignes', body);
+    if (ligneId) await sbUpdate('compta_budget_lignes', ligneId, body);
+    else await sbInsert('compta_budget_lignes', body);
     document.querySelector('.modal-bg')?.remove();
     toast('Ligne enregistrée', 'ok');
     await renderBudget();
