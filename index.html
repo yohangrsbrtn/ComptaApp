@@ -102,8 +102,6 @@
 
   .empty { text-align: center; padding: 50px 20px; color: var(--muted); }
   .toast { position: fixed; bottom: 24px; right: 24px; background: var(--card2); border: 1px solid var(--border); padding: 12px 18px; border-radius: 12px; z-index: 200; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
-  .mobile-account-fab { display: none; position: fixed; top: 14px; right: 14px; z-index: 60; gap: 8px; }
-  .mobile-account-fab button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--card2); color: var(--muted); font-size: 15px; }
   .toast.err { border-color: var(--red); color: var(--red); }
   .toast.ok { border-color: var(--accent); color: var(--accent2); }
 
@@ -132,7 +130,6 @@
     .nav-label-short { display: block; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
     .main { padding: 18px 16px 90px; }
     .row2, .row3 { grid-template-columns: 1fr; }
-    .mobile-account-fab { display: flex; }
   }
 </style>
 </head>
@@ -181,16 +178,12 @@ function shell(innerHtml) {
     <div class="sidebar">
       <div class="brand"><span class="dot"></span> Compta</div>
       ${NAV.map(n => `<div class="nav-item ${S.page === n.id ? 'active' : ''}" onclick="setPage('${n.id}')"><span class="ic">${n.ic}</span> <span class="nav-label-full">${n.label}</span><span class="nav-label-short">${n.short}</span></div>`).join('')}
-      <div class="sidebar-foot" style="display:flex;flex-direction:column;gap:8px;">
-        <button class="btn-logout" onclick="openChangerMdpModal()" style="color:var(--muted);">⚙ Changer le mot de passe</button>
-        <button class="btn-logout" onclick="doLogout()">Déconnexion</button>
+      <div class="sidebar-foot" style="display:flex;gap:8px;align-items:center;">
+        <button class="btn-logout" onclick="doLogout()" style="flex:1;">Déconnexion</button>
+        <button class="btn-logout" onclick="openChangerMdpModal()" title="Changer le mot de passe" style="width:38px;flex:none;padding:10px 0;">⚙</button>
       </div>
     </div>
     <div class="main">${innerHtml}</div>
-    <div class="mobile-account-fab">
-      <button onclick="openChangerMdpModal()" title="Changer le mot de passe">⚙</button>
-      <button onclick="doLogout()" title="Déconnexion">⏻</button>
-    </div>
   </div>`;
 }
 
