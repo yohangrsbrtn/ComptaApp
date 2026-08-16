@@ -13,6 +13,7 @@ let _buType = 'revenu';
 let _buLignes = [];
 let _buTreso = null;
 let _buModeles = [];
+let _buSort = { col: 'date', dir: 'desc' };
 let _buAuto = { coachingDistance: 0, coachingSeance: 0, chimie: 0, addict: 0, achatsFournisseur: 0 };
 
 function _moisDateRange(mois) {
@@ -64,14 +65,25 @@ async function renderBudget() {
   const resultat = totRevenu - totFixe - totVar - totEparg - totCredit;
 
   const rowsType = _buLignes.filter(l => l.type === _buType);
-  if (_buType !== 'depense_fixe') {
-    rowsType.sort((a, b) => {
-      if (!a.date && !b.date) return 0;
-      if (!a.date) return 1;
-      if (!b.date) return -1;
-      return new Date(b.date) - new Date(a.date);
-    });
-  }
+  const { col: sortCol, dir: sortDir } = _buSort;
+  rowsType.sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (sortCol === 'montant') return sortDir === 'asc' ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+    if (sortCol === 'date') {
+      if (!va && !vb) return 0;
+      if (!va) return 1;
+      if (!vb) return -1;
+      return sortDir === 'asc' ? new Date(va) - new Date(vb) : new Date(vb) - new Date(va);
+    }
+    va = (va || '').toString().toLowerCase(); vb = (vb || '').toString().toLowerCase();
+    return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+
+  const th = (c, label) => {
+    const active = sortCol === c;
+    const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th style="cursor:pointer;user-select:none;" onclick="_buTri('${c}')">${label}${arrow}</th>`;
+  };
 
   document.getElementById('root').innerHTML = shell(`
     <div class="topbar">
@@ -134,7 +146,7 @@ async function renderBudget() {
     ${_buType === 'depense_fixe' ? `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Payé</th><th>Catégorie</th><th>Banque</th><th>Détail</th><th>Montant</th><th></th></tr></thead>
+        <thead><tr><th>Payé</th>${th('categorie','Catégorie')}${th('banque','Banque')}${th('detail','Détail')}${th('montant','Montant')}<th></th></tr></thead>
         <tbody>
           ${rowsType.length ? rowsType.map(l => `
             <tr>
@@ -155,7 +167,7 @@ async function renderBudget() {
     ` : `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Catégorie</th><th>Banque</th><th>Détail</th><th>Date</th><th>Montant</th><th></th></tr></thead>
+        <thead><tr>${th('categorie','Catégorie')}${th('banque','Banque')}${th('detail','Détail')}${th('date','Date')}${th('montant','Montant')}<th></th></tr></thead>
         <tbody>
           ${rowsType.length ? rowsType.map(l => `
             <tr>
@@ -176,6 +188,12 @@ async function renderBudget() {
   `);
 
   function sum(type) { return lignes.filter(l => l.type === type).reduce((s, l) => s + Number(l.montant || 0), 0); }
+}
+
+function _buTri(col) {
+  if (_buSort.col === col) _buSort.dir = _buSort.dir === 'asc' ? 'desc' : 'asc';
+  else _buSort = { col, dir: col === 'montant' || col === 'date' ? 'desc' : 'asc' };
+  renderBudget();
 }
 
 async function toggleCoche(id, coche) {
