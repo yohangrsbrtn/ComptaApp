@@ -289,6 +289,12 @@ async function deleteProduit(id) {
 }
 
 // ── COMMANDES FOURNISSEUR ───────────────────────────────────────────
+const STATUT_FOURN = {
+  a_passer: { label: 'À passer', badge: 'badge-muted' },
+  en_cours: { label: 'En cours', badge: 'badge-gold' },
+  recue: { label: 'Reçue', badge: 'badge-green' },
+};
+
 function _tplFournisseur() {
   return `
     <div class="card kpi" style="margin-bottom:16px;max-width:280px;">
@@ -301,14 +307,19 @@ function _tplFournisseur() {
       <div style="flex:1;"></div>
       <button class="btn btn-primary" onclick="openCmdFournisseurModal()">+ Commande</button>
     </div>
-    <div class="page-sub" style="margin:-6px 0 10px;">En attente de réception — le stock et la dépense ne bougent qu'après clic sur "Réceptionner"</div>
+    <div class="page-sub" style="margin:-6px 0 10px;">Le stock et la dépense ne bougent qu'au passage au statut "Reçue"</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th><input type="checkbox" onchange="_chToggleAllFournisseur(this.checked)" style="width:18px;height:18px;"></th><th>Produit</th><th>Marque</th><th>Qté</th><th>Prix achat unit.</th><th>Total</th><th></th></tr></thead>
+        <thead><tr><th><input type="checkbox" onchange="_chToggleAllFournisseur(this.checked)" style="width:18px;height:18px;"></th><th>Statut</th><th>Produit</th><th>Marque</th><th>Qté</th><th>Prix achat unit.</th><th>Total</th><th></th></tr></thead>
         <tbody>
           ${_chFournisseur.length ? _chFournisseur.map(c => `
             <tr>
               <td><input type="checkbox" class="ch-cf-sel" value="${c.id}" style="width:18px;height:18px;"></td>
+              <td>
+                <select onchange="changerStatutFournisseur('${c.id}', this.value)" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12.5px;">
+                  ${Object.keys(STATUT_FOURN).filter(s => s !== 'recue').map(s => `<option value="${s}" ${c.statut===s?'selected':''}>${STATUT_FOURN[s].label}</option>`).join('')}
+                </select>
+              </td>
               <td><b>${esc(c.produit_nom)}</b></td>
               <td>${esc(c.marque) || '—'}</td>
               <td>${c.quantite}</td>
@@ -318,10 +329,19 @@ function _tplFournisseur() {
                 <button class="btn btn-primary btn-sm" onclick="ouvrirReceptionModal('${c.id}')">Réceptionner</button>
                 <button class="btn btn-ghost btn-sm" onclick="deleteCmdFournisseur('${c.id}')">Suppr.</button>
               </td>
-            </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucune commande en attente</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="8"><div class="empty">Aucune commande en attente</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
+}
+
+async function changerStatutFournisseur(id, statut) {
+  try {
+    await sbUpdate('compta_commandes_fournisseur', id, { statut });
+    const c = _chFournisseur.find(x => x.id === id);
+    if (c) c.statut = statut;
+    toast('Statut mis à jour', 'ok');
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
 }
 
 function _chToggleAllFournisseur(checked) {
@@ -344,6 +364,12 @@ function openCmdFournisseurModal() {
       <div class="field"><label>Marque</label><input id="cf-marque"></div>
       <div class="field"><label>Quantité</label><input id="cf-qte" type="number" value="1"></div>
       <div class="field"><label>Prix achat unit.</label><input id="cf-prix" type="number" step="0.01" value="0"></div>
+    </div>
+    <div class="field"><label>Statut</label>
+      <select id="cf-statut">
+        <option value="a_passer">À passer</option>
+        <option value="en_cours" selected>En cours (déjà commandée)</option>
+      </select>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
@@ -374,6 +400,7 @@ async function saveCmdFournisseur() {
     marque: document.getElementById('cf-marque').value.trim() || null,
     quantite: parseFloat(document.getElementById('cf-qte').value) || 0,
     prix_achat_unitaire: parseFloat(document.getElementById('cf-prix').value) || 0,
+    statut: document.getElementById('cf-statut').value,
     date: new Date().toISOString().slice(0, 10),
   };
   try {
@@ -440,7 +467,7 @@ async function receptionnerCommandes(ids) {
       }
       // Réception = statut réel de la dépense (pas la commande) : le stock ET la dépense
       // mensuelle ne bougent qu'ici, jamais à la simple création de la commande.
-      await sbUpdate('compta_commandes_fournisseur', id, { recue: true, date_reception: dateReception });
+      await sbUpdate('compta_commandes_fournisseur', id, { recue: true, statut: 'recue', date_reception: dateReception });
     }
     document.querySelector('.modal-bg')?.remove();
     toast(`${ids.length} commande(s) réceptionnée(s), stock mis à jour`, 'ok');
