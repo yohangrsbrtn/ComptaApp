@@ -26,13 +26,14 @@ function _moisDateRange(mois) {
 
 async function renderBudget() {
   const { debut, fin } = _moisDateRange(_buMois);
-  let [lignes, treso, paiements, ventes, addict, achats, modeles] = await Promise.all([
+  let [lignes, treso, paiements, ventes, addict, achats, achatsAddict, modeles] = await Promise.all([
     sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`),
     sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
     sbSelect('compta_ventes', `annulee=eq.false&date=gte.${debut}&date=lt.${fin}`),
     sbSelect('compta_addict', `date=gte.${debut}&date=lt.${fin}`),
     sbSelect('compta_commandes_fournisseur', `recue=eq.true&date_reception=gte.${debut}&date_reception=lt.${fin}`),
+    sbSelect('compta_addict_achats', `statut=eq.recue&date_reception=gte.${debut}&date_reception=lt.${fin}`),
     sbSelect('compta_depenses_fixes_modeles', 'actif=eq.true&order=categorie.asc'),
   ]);
   _buModeles = modeles;
@@ -54,7 +55,8 @@ async function renderBudget() {
     coachingSeance: paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0),
     chimie: ventes.reduce((s, v) => s + (Number(v.total_vente || 0) - Number(v.total_achat || 0)), 0),
     addict: addict.reduce((s, a) => s + (Number(a.vente || 0) - Number(a.achat || 0)), 0),
-    achatsFournisseur: achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0),
+    achatsFournisseur: achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0)
+      + achatsAddict.reduce((s, a) => s + Number(a.quantite || 0) * Number(a.prix_achat_unitaire || 0), 0),
   };
   const totalAutoRevenu = _buAuto.coachingDistance + _buAuto.coachingSeance + _buAuto.chimie + _buAuto.addict;
 
@@ -122,7 +124,7 @@ async function renderBudget() {
       <table>
         <thead><tr><th>Catégorie</th><th>Source</th><th>Montant</th></tr></thead>
         <tbody>
-          <tr><td><b>Commandes fournisseur (Chimie)</b></td><td><span class="badge badge-blue">Auto · Réceptions</span></td><td>${fmtEUR(_buAuto.achatsFournisseur)}</td></tr>
+          <tr><td><b>Achats fournisseur (Chimie + Addict)</b></td><td><span class="badge badge-blue">Auto · Réceptions</span></td><td>${fmtEUR(_buAuto.achatsFournisseur)}</td></tr>
         </tbody>
       </table>
     </div>

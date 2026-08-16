@@ -305,6 +305,7 @@ function _tplFournisseur() {
     <div class="toolbar">
       <button class="btn btn-primary" onclick="ouvrirReceptionModal(null, true)">Réceptionner la sélection</button>
       <div style="flex:1;"></div>
+      <button class="btn btn-ghost" onclick="openFraisPortModal()">+ Frais de port</button>
       <button class="btn btn-primary" onclick="openCmdFournisseurModal()">+ Commande</button>
     </div>
     <div class="page-sub" style="margin:-6px 0 10px;">Le stock et la dépense ne bougent qu'au passage au statut "Reçue"</div>
@@ -320,7 +321,7 @@ function _tplFournisseur() {
                   ${Object.keys(STATUT_FOURN).filter(s => s !== 'recue').map(s => `<option value="${s}" ${c.statut===s?'selected':''}>${STATUT_FOURN[s].label}</option>`).join('')}
                 </select>
               </td>
-              <td><b>${esc(c.produit_nom)}</b></td>
+              <td><b>${esc(c.produit_nom)}</b>${c.est_frais ? ' <span class="badge badge-gold">Frais</span>' : ''}</td>
               <td>${esc(c.marque) || '—'}</td>
               <td>${c.quantite}</td>
               <td>${fmtEUR(c.prix_achat_unitaire)}</td>
@@ -378,6 +379,46 @@ function openCmdFournisseurModal() {
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+}
+
+function openFraisPortModal() {
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Nouveau frais de port</h3>
+    <div class="field"><label>Détail (optionnel)</label><input id="fp-detail" placeholder="ex: Colissimo commande du 15/08"></div>
+    <div class="field"><label>Montant (€)</label><input id="fp-montant" type="number" step="0.01" value="0"></div>
+    <div class="field"><label>Statut</label>
+      <select id="fp-statut">
+        <option value="a_passer">À passer</option>
+        <option value="en_cours" selected>En cours (déjà payé)</option>
+      </select>
+    </div>
+    <div class="page-sub" style="margin-bottom:10px;">N'affecte aucun stock — compte uniquement comme dépense à la réception.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveFraisPort()">Enregistrer</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function saveFraisPort() {
+  const body = {
+    produit_nom: 'Frais de port' + (document.getElementById('fp-detail').value.trim() ? ' — ' + document.getElementById('fp-detail').value.trim() : ''),
+    quantite: 1,
+    prix_achat_unitaire: parseFloat(document.getElementById('fp-montant').value) || 0,
+    statut: document.getElementById('fp-statut').value,
+    est_frais: true,
+    date: new Date().toISOString().slice(0, 10),
+  };
+  try {
+    await sbInsert('compta_commandes_fournisseur', body);
+    document.querySelector('.modal-bg')?.remove();
+    toast('Frais de port enregistré', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function _cfAutofill() {
@@ -456,14 +497,16 @@ async function receptionnerCommandes(ids) {
     for (const id of ids) {
       const c = _chFournisseur.find(x => x.id === id);
       if (!c) continue;
-      let produit = c.produit_id ? _chProduits.find(p => p.id === c.produit_id) : _chProduits.find(p => p.nom === c.produit_nom);
-      if (produit) {
-        const nouveauStock = Number(produit.stock_reel || 0) + Number(c.quantite || 0);
-        await sbUpdate('compta_produits', produit.id, { stock_reel: nouveauStock });
-        produit.stock_reel = nouveauStock;
-      } else {
-        produit = (await sbInsert('compta_produits', { nom: c.produit_nom, marque: c.marque, prix_achat: c.prix_achat_unitaire, stock_reel: c.quantite }))[0];
-        _chProduits.push(produit);
+      if (!c.est_frais) {
+        let produit = c.produit_id ? _chProduits.find(p => p.id === c.produit_id) : _chProduits.find(p => p.nom === c.produit_nom);
+        if (produit) {
+          const nouveauStock = Number(produit.stock_reel || 0) + Number(c.quantite || 0);
+          await sbUpdate('compta_produits', produit.id, { stock_reel: nouveauStock });
+          produit.stock_reel = nouveauStock;
+        } else {
+          produit = (await sbInsert('compta_produits', { nom: c.produit_nom, marque: c.marque, prix_achat: c.prix_achat_unitaire, stock_reel: c.quantite }))[0];
+          _chProduits.push(produit);
+        }
       }
       // Réception = statut réel de la dépense (pas la commande) : le stock ET la dépense
       // mensuelle ne bougent qu'ici, jamais à la simple création de la commande.
