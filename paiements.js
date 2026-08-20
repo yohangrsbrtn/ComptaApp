@@ -129,7 +129,9 @@ async function lancerSyncGoCardless() {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/gocardless-sync`, {
       method: 'POST', headers: supaHeaders(),
     });
-    const data = await res.json();
+    if (res.status === 401) throw new Error('Session expirée — reconnecte-toi puis réessaie.');
+    let data;
+    try { data = await res.json(); } catch { throw new Error(`Réponse invalide du serveur (${res.status})`); }
     if (!data.ok) throw new Error(data.error || 'Erreur de synchronisation');
     toast(`${data.nouveaux} nouveau(x) paiement(s) importé(s) de GoCardless`, 'ok');
     await renderPaiements();
