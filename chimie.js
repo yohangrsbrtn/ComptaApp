@@ -519,6 +519,21 @@ async function receptionnerCommandes(ids) {
 }
 
 // ── COMMANDES CLIENTS → VALIDATION EN VENTES ────────────────────────
+let _ccFrais = {};
+
+function _ccTotalAvecFrais(cl, totalBrut) {
+  const frais = Number(_ccFrais[cl] || 0);
+  return totalBrut * (1 + frais / 100);
+}
+
+function _ccFraisChange(cl, totalBrut, val) {
+  _ccFrais[cl] = parseFloat(val) || 0;
+  const total = _ccTotalAvecFrais(cl, totalBrut);
+  const idSafe = cl.replace(/[^a-zA-Z0-9]/g, '_');
+  const span = document.getElementById(`cc-total-${idSafe}`);
+  if (span) span.textContent = fmtEUR(total);
+}
+
 function _tplClients() {
   const parClient = {};
   _chClients.forEach(c => { (parClient[c.client] = parClient[c.client] || []).push(c); });
@@ -528,14 +543,12 @@ function _tplClients() {
     ${clients.length ? clients.map(cl => {
       const lignes = parClient[cl];
       const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
+      const idSafe = cl.replace(/[^a-zA-Z0-9]/g, '_');
       return `
       <div class="card" style="margin-bottom:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>
-          <div style="font-weight:700;">${esc(cl)}</div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <span class="page-sub">Total brut : ${fmtEUR(totalBrut)}</span>
-            <button class="btn btn-primary btn-sm" onclick='event.stopPropagation();ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
-          </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="font-weight:700;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>${esc(cl)}</div>
+          <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
         </div>
         <table>
           <thead><tr><th>Produit</th><th>Qté</th><th>PU vente</th><th>Total</th><th></th></tr></thead>
@@ -555,6 +568,25 @@ function _tplClients() {
                 <td><button class="btn btn-ghost btn-sm" onclick="deleteCmdClient('${l.id}')">Suppr.</button></td>
               </tr>`).join('')}
           </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2" style="text-align:right;">Total avant frais</td>
+              <td colspan="2">${fmtEUR(totalBrut)}</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td colspan="2" style="text-align:right;font-weight:600;">Frais</td>
+              <td colspan="2">
+                <input type="number" step="0.1" value="${_ccFrais[cl] || 0}" style="width:70px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput="_ccFraisChange(${JSON.stringify(cl)}, ${totalBrut}, this.value)"> %
+              </td>
+              <td></td>
+            </tr>
+            <tr>
+              <td colspan="2" style="text-align:right;font-weight:700;">Total après frais</td>
+              <td colspan="2" id="cc-total-${idSafe}" style="font-weight:700;">${fmtEUR(_ccTotalAvecFrais(cl, totalBrut))}</td>
+              <td></td>
+            </tr>
+          </tfoot>
         </table>
       </div>`;
     }).join('') : `<div class="empty">Aucune commande client en attente</div>`}
@@ -667,13 +699,15 @@ function ouvrirDetailClient(client) {
 function ouvrirValidationClient(client) {
   const lignes = _chClients.filter(c => c.client === client);
   const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
+  const frais = Number(_ccFrais[client] || 0);
+  const totalAvecFrais = totalBrut * (1 + frais / 100);
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
     <h3>Valider la vente — ${esc(client)}</h3>
-    <div class="page-sub" style="margin-bottom:14px;">Total brut : <b>${fmtEUR(totalBrut)}</b></div>
-    <div class="field"><label>Frais d'envoi / majoration (%)</label><input id="vc-remise" type="number" step="0.1" value="0" oninput="_vcRecalc(${totalBrut})"></div>
-    <div class="field"><label>Montant réel encaissé (€) — c'est ce total qui sera comptabilisé</label><input id="vc-montant" type="number" step="0.01" value="${totalBrut.toFixed(2)}"></div>
+    <div class="page-sub" style="margin-bottom:14px;">Total avant frais : <b>${fmtEUR(totalBrut)}</b></div>
+    <div class="field"><label>Frais d'envoi / majoration (%)</label><input id="vc-remise" type="number" step="0.1" value="${frais}" oninput="_vcRecalc(${totalBrut})"></div>
+    <div class="field"><label>Montant réel encaissé (€) — c'est ce total qui sera comptabilisé</label><input id="vc-montant" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick='confirmerValidationClient(${JSON.stringify(client)}, ${totalBrut})'>Valider</button>
@@ -711,6 +745,7 @@ async function confirmerValidationClient(client, totalBrut) {
       if (produit) await sbUpdate('compta_produits', produit.id, { stock_reel: Number(produit.stock_reel || 0) - Number(l.quantite || 0) });
       await sbDelete('compta_commandes_clients', l.id);
     }
+    delete _ccFrais[client];
     document.querySelector('.modal-bg')?.remove();
     toast(`Vente validée pour ${client}`, 'ok');
     await renderChimie();
