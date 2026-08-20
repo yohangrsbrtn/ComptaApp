@@ -530,11 +530,11 @@ function _tplClients() {
       const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
       return `
       <div class="card" style="margin-bottom:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>
           <div style="font-weight:700;">${esc(cl)}</div>
           <div style="display:flex;gap:8px;align-items:center;">
             <span class="page-sub">Total brut : ${fmtEUR(totalBrut)}</span>
-            <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
+            <button class="btn btn-primary btn-sm" onclick='event.stopPropagation();ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
           </div>
         </div>
         <table>
@@ -543,7 +543,13 @@ function _tplClients() {
             ${lignes.map(l => `
               <tr>
                 <td>${esc(l.produit_nom)}</td>
-                <td>${l.quantite}</td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterQteCmdClient('${l.id}', -1)">−</button>
+                    <span style="min-width:20px;text-align:center;">${l.quantite}</span>
+                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterQteCmdClient('${l.id}', 1)">+</button>
+                  </div>
+                </td>
                 <td>${fmtEUR(l.prix_vente_unitaire)}</td>
                 <td>${fmtEUR(l.quantite * l.prix_vente_unitaire)}</td>
                 <td><button class="btn btn-ghost btn-sm" onclick="deleteCmdClient('${l.id}')">Suppr.</button></td>
@@ -610,6 +616,54 @@ async function deleteCmdClient(id) {
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
+async function ajusterQteCmdClient(id, delta) {
+  const l = _chClients.find(c => c.id === id);
+  if (!l) return;
+  const nouvelleQte = Math.max(1, Number(l.quantite || 1) + delta);
+  try {
+    await sbUpdate('compta_commandes_clients', id, { quantite: nouvelleQte });
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+function ouvrirDetailClient(client) {
+  const lignes = _chClients.filter(c => c.client === client);
+  let totalVente = 0, totalAchat = 0;
+  const rows = lignes.map(l => {
+    const produit = l.produit_id ? _chProduits.find(p => p.id === l.produit_id) : _chProduits.find(p => p.nom === l.produit_nom);
+    const prixAchat = produit?.prix_achat || 0;
+    const vente = l.quantite * l.prix_vente_unitaire;
+    const achat = l.quantite * prixAchat;
+    totalVente += vente; totalAchat += achat;
+    return `<tr>
+      <td>${esc(l.produit_nom)}</td>
+      <td>${l.quantite}</td>
+      <td>${fmtEUR(l.prix_vente_unitaire)}</td>
+      <td>${fmtEUR(vente)}</td>
+      <td>${fmtEUR(vente - achat)}</td>
+    </tr>`;
+  }).join('');
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Détail — ${esc(client)}</h3>
+    <table>
+      <thead><tr><th>Produit</th><th>Qté</th><th>PU vente</th><th>Total</th><th>Bénéfice</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="page-sub" style="margin:14px 0;display:flex;justify-content:space-between;">
+      <span>Total vente : <b>${fmtEUR(totalVente)}</b></span>
+      <span>Bénéfice estimé : <b>${fmtEUR(totalVente - totalAchat)}</b></span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Fermer</button>
+      <button class="btn btn-primary" onclick='this.closest(".modal-bg").remove();ouvrirValidationClient(${JSON.stringify(client)})'>Valider la vente</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
 function ouvrirValidationClient(client) {
   const lignes = _chClients.filter(c => c.client === client);
   const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
@@ -618,8 +672,8 @@ function ouvrirValidationClient(client) {
   bg.innerHTML = `<div class="modal">
     <h3>Valider la vente — ${esc(client)}</h3>
     <div class="page-sub" style="margin-bottom:14px;">Total brut : <b>${fmtEUR(totalBrut)}</b></div>
-    <div class="field"><label>Remise / majoration (%)</label><input id="vc-remise" type="number" step="0.1" value="0" oninput="_vcRecalc(${totalBrut})"></div>
-    <div class="field"><label>Montant réel encaissé (€)</label><input id="vc-montant" type="number" step="0.01" value="${totalBrut.toFixed(2)}"></div>
+    <div class="field"><label>Frais d'envoi / majoration (%)</label><input id="vc-remise" type="number" step="0.1" value="0" oninput="_vcRecalc(${totalBrut})"></div>
+    <div class="field"><label>Montant réel encaissé (€) — c'est ce total qui sera comptabilisé</label><input id="vc-montant" type="number" step="0.01" value="${totalBrut.toFixed(2)}"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick='confirmerValidationClient(${JSON.stringify(client)}, ${totalBrut})'>Valider</button>
