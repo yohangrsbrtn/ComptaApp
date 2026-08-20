@@ -580,7 +580,7 @@ function _tplClients() {
             <tr>
               <td colspan="3" style="text-align:right;font-weight:600;">Frais</td>
               <td>
-                <input type="number" step="0.1" value="${_ccFrais[cl] || 0}" style="width:70px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput="_ccFraisChange(${JSON.stringify(cl)}, ${totalBrut}, this.value)"> %
+                <input type="number" step="0.1" value="${_ccFrais[cl] || 0}" style="width:70px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput='_ccFraisChange(${JSON.stringify(cl)}, ${totalBrut}, this.value)'> %
               </td>
               <td></td>
             </tr>
