@@ -547,7 +547,10 @@ function _tplClients() {
       return `
       <div class="card" style="margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div style="font-weight:700;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>${esc(cl)}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="font-weight:700;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>${esc(cl)}</div>
+            <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" title="Ajouter une ligne pour ce client" onclick='openCmdClientModal(${JSON.stringify(cl)})'>+</button>
+          </div>
           <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
         </div>
         <table>
@@ -555,35 +558,35 @@ function _tplClients() {
           <tbody>
             ${lignes.map(l => `
               <tr>
-                <td>${esc(l.produit_nom)}</td>
+                <td style="cursor:pointer;" onclick="openCmdClientModal(null, '${l.id}')">${esc(l.produit_nom)}</td>
                 <td>
                   <div style="display:flex;align-items:center;gap:6px;">
-                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterQteCmdClient('${l.id}', -1)">−</button>
-                    <span style="min-width:20px;text-align:center;">${l.quantite}</span>
-                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterQteCmdClient('${l.id}', 1)">+</button>
+                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="event.stopPropagation();ajusterQteCmdClient('${l.id}', -1)">−</button>
+                    <span style="min-width:20px;text-align:center;cursor:pointer;" onclick="openCmdClientModal(null, '${l.id}')">${l.quantite}</span>
+                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="event.stopPropagation();ajusterQteCmdClient('${l.id}', 1)">+</button>
                   </div>
                 </td>
-                <td>${fmtEUR(l.prix_vente_unitaire)}</td>
-                <td>${fmtEUR(l.quantite * l.prix_vente_unitaire)}</td>
-                <td><button class="btn btn-ghost btn-sm" onclick="deleteCmdClient('${l.id}')">Suppr.</button></td>
+                <td style="cursor:pointer;" onclick="openCmdClientModal(null, '${l.id}')">${fmtEUR(l.prix_vente_unitaire)}</td>
+                <td style="cursor:pointer;" onclick="openCmdClientModal(null, '${l.id}')">${fmtEUR(l.quantite * l.prix_vente_unitaire)}</td>
+                <td><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();deleteCmdClient('${l.id}')">Suppr.</button></td>
               </tr>`).join('')}
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="2" style="text-align:right;">Total avant frais</td>
-              <td colspan="2">${fmtEUR(totalBrut)}</td>
+              <td colspan="3" style="text-align:right;">Total avant frais</td>
+              <td>${fmtEUR(totalBrut)}</td>
               <td></td>
             </tr>
             <tr>
-              <td colspan="2" style="text-align:right;font-weight:600;">Frais</td>
-              <td colspan="2">
+              <td colspan="3" style="text-align:right;font-weight:600;">Frais</td>
+              <td>
                 <input type="number" step="0.1" value="${_ccFrais[cl] || 0}" style="width:70px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput="_ccFraisChange(${JSON.stringify(cl)}, ${totalBrut}, this.value)"> %
               </td>
               <td></td>
             </tr>
             <tr>
-              <td colspan="2" style="text-align:right;font-weight:700;">Total après frais</td>
-              <td colspan="2" id="cc-total-${idSafe}" style="font-weight:700;">${fmtEUR(_ccTotalAvecFrais(cl, totalBrut))}</td>
+              <td colspan="3" style="text-align:right;font-weight:700;">Total après frais</td>
+              <td id="cc-total-${idSafe}" style="font-weight:700;">${fmtEUR(_ccTotalAvecFrais(cl, totalBrut))}</td>
               <td></td>
             </tr>
           </tfoot>
@@ -593,29 +596,32 @@ function _tplClients() {
   `;
 }
 
-function openCmdClientModal() {
+function openCmdClientModal(clientPrefill, editId) {
+  const editLigne = editId ? _chClients.find(c => c.id === editId) : null;
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal">
-    <h3>Nouvelle ligne — Commande client</h3>
-    <div class="field"><label>Client</label><input id="cc-client"></div>
+  bg.innerHTML = `<div class="modal" data-edit-id="${editId || ''}">
+    <h3>${editLigne ? 'Modifier la ligne' : 'Nouvelle ligne'} — Commande client</h3>
+    <div class="field"><label>Client</label><input id="cc-client" value="${esc(editLigne?.client || clientPrefill || '')}"></div>
     <div class="field"><label>Produit</label>
       <select id="cc-produit" onchange="_ccAutofill()">
-        ${_chProduits.map(p => `<option value="${p.id}" data-marque="${esc(p.marque)}" data-vente="${p.prix_vente||''}">${esc(p.nom)}</option>`).join('')}
+        ${_chProduits.map(p => `<option value="${p.id}" data-marque="${esc(p.marque)}" data-vente="${p.prix_vente||''}" ${editLigne && editLigne.produit_id===p.id ? 'selected' : ''}>${esc(p.nom)}</option>`).join('')}
       </select>
     </div>
     <div class="row2">
-      <div class="field"><label>Quantité</label><input id="cc-qte" type="number" value="1"></div>
-      <div class="field"><label>Prix vente unit.</label><input id="cc-prix" type="number" step="0.01" value="0"></div>
+      <div class="field"><label>Quantité</label><input id="cc-qte" type="number" value="${editLigne?.quantite ?? 1}"></div>
+      <div class="field"><label>Prix vente unit.</label><input id="cc-prix" type="number" step="0.01" value="${editLigne?.prix_vente_unitaire ?? 0}"></div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
-      <button class="btn btn-primary" onclick="saveCmdClient()">Ajouter</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove();renderChimie()">${editLigne ? 'Annuler' : 'Terminé'}</button>
+      ${editLigne
+        ? `<button class="btn btn-primary" onclick="saveCmdClient('${editId}')">Enregistrer</button>`
+        : `<button class="btn btn-primary" onclick="saveCmdClient()">Ajouter (et continuer)</button>`}
     </div>
   </div>`;
-  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  bg.addEventListener('click', e => { if (e.target === bg) { bg.remove(); renderChimie(); } });
   document.body.appendChild(bg);
-  _ccAutofill();
+  if (!editLigne) _ccAutofill();
 }
 
 function _ccAutofill() {
@@ -623,7 +629,7 @@ function _ccAutofill() {
   if (opt && opt.dataset.vente) document.getElementById('cc-prix').value = opt.dataset.vente;
 }
 
-async function saveCmdClient() {
+async function saveCmdClient(editId) {
   const opt = document.getElementById('cc-produit').selectedOptions[0];
   const client = document.getElementById('cc-client').value.trim();
   if (!client || !opt) { toast('Client et produit requis', 'err'); return; }
@@ -636,10 +642,18 @@ async function saveCmdClient() {
     prix_vente_unitaire: parseFloat(document.getElementById('cc-prix').value) || 0,
   };
   try {
-    await sbInsert('compta_commandes_clients', body);
-    document.querySelector('.modal-bg')?.remove();
-    toast('Ligne ajoutée', 'ok');
-    await renderChimie();
+    if (editId) {
+      await sbUpdate('compta_commandes_clients', editId, body);
+      document.querySelector('.modal-bg')?.remove();
+      toast('Ligne modifiée', 'ok');
+      await renderChimie();
+    } else {
+      await sbInsert('compta_commandes_clients', body);
+      toast('Ligne ajoutée', 'ok');
+      _chClients = await sbSelect('compta_commandes_clients', 'select=*&order=created_at.desc');
+      document.getElementById('cc-qte').value = 1;
+      document.getElementById('cc-prix').value = document.getElementById('cc-produit').selectedOptions[0]?.dataset.vente || 0;
+    }
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
