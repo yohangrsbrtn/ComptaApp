@@ -1,20 +1,23 @@
 let _chTab = 'ventes';
 let _chProduits = [];
 let _chFournisseur = [];
+let _chFournisseurRecues = [];
 let _chClients = [];
 let _chVentes = [];
 let _chDepenseMois = 0;
 
 async function renderChimie() {
   const { debut, fin } = _moisDateRange(moisActuel());
-  const [prod, four, cli, ven, recuesMois] = await Promise.all([
+  const [prod, four, cli, ven, recuesMois, recuesRecent] = await Promise.all([
     sbSelect('compta_produits', 'select=*&order=nom.asc'),
-    sbSelect('compta_commandes_fournisseur', 'select=*&recue=eq.false&order=created_at.desc'),
+    sbSelect('compta_commandes_fournisseur', 'select=*&recue=eq.false&order=date_commande.desc,created_at.desc'),
     sbSelect('compta_commandes_clients', 'select=*&order=created_at.desc'),
     sbSelect('compta_ventes', 'select=*&order=date.desc&limit=300'),
     sbSelect('compta_commandes_fournisseur', `recue=eq.true&date_reception=gte.${debut}&date_reception=lt.${fin}`),
+    sbSelect('compta_commandes_fournisseur', 'select=*&recue=eq.true&order=date_reception.desc&limit=30'),
   ]);
   _chProduits = prod; _chFournisseur = four; _chClients = cli; _chVentes = ven;
+  _chFournisseurRecues = recuesRecent;
   _chDepenseMois = recuesMois.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0);
 
   document.getElementById('root').innerHTML = shell(`
@@ -296,6 +299,14 @@ const STATUT_FOURN = {
 };
 
 function _tplFournisseur() {
+  const parLot = {};
+  _chFournisseur.forEach(c => { const k = c.lot_id || c.id; (parLot[k] = parLot[k] || []).push(c); });
+  const lots = Object.values(parLot).sort((a, b) => (b[0].date_commande || '').localeCompare(a[0].date_commande || ''));
+
+  const parLotRecu = {};
+  _chFournisseurRecues.forEach(c => { const k = c.lot_id || c.id; (parLotRecu[k] = parLotRecu[k] || []).push(c); });
+  const lotsRecus = Object.values(parLotRecu).sort((a, b) => (b[0].date_reception || '').localeCompare(a[0].date_reception || ''));
+
   return `
     <div class="card kpi" style="margin-bottom:16px;max-width:280px;">
       <div class="label">Dépensé ce mois-ci (réceptionné)</div>
@@ -303,37 +314,68 @@ function _tplFournisseur() {
       <div class="sub">Compté au moment de la réception, pas de la commande</div>
     </div>
     <div class="toolbar">
-      <button class="btn btn-primary" onclick="ouvrirReceptionModal(null, true)">Réceptionner la sélection</button>
+      <div></div>
       <div style="flex:1;"></div>
       <button class="btn btn-ghost" onclick="openFraisPortModal()">+ Frais de port</button>
-      <button class="btn btn-primary" onclick="openCmdFournisseurModal()">+ Commande</button>
+      <button class="btn btn-primary" onclick="openCmdFournisseurModal()">+ Nouvelle commande (nouveau bloc)</button>
     </div>
-    <div class="page-sub" style="margin:-6px 0 10px;">Le stock et la dépense ne bougent qu'au passage au statut "Reçue"</div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th><input type="checkbox" onchange="_chToggleAllFournisseur(this.checked)" style="width:18px;height:18px;"></th><th>Statut</th><th>Produit</th><th>Marque</th><th>Qté</th><th>Prix achat unit.</th><th>Total</th><th></th></tr></thead>
-        <tbody>
-          ${_chFournisseur.length ? _chFournisseur.map(c => `
-            <tr>
-              <td><input type="checkbox" class="ch-cf-sel" value="${c.id}" style="width:18px;height:18px;"></td>
-              <td>
-                <select onchange="changerStatutFournisseur('${c.id}', this.value)" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12.5px;">
-                  ${Object.keys(STATUT_FOURN).filter(s => s !== 'recue').map(s => `<option value="${s}" ${c.statut===s?'selected':''}>${STATUT_FOURN[s].label}</option>`).join('')}
-                </select>
-              </td>
-              <td><b>${esc(c.produit_nom)}</b>${c.est_frais ? ' <span class="badge badge-gold">Frais</span>' : ''}</td>
-              <td>${esc(c.marque) || '—'}</td>
-              <td>${c.quantite}</td>
-              <td>${fmtEUR(c.prix_achat_unitaire)}</td>
-              <td>${fmtEUR(c.quantite * c.prix_achat_unitaire)}</td>
-              <td style="display:flex;gap:6px;">
-                <button class="btn btn-primary btn-sm" onclick="ouvrirReceptionModal('${c.id}')">Réceptionner</button>
-                <button class="btn btn-ghost btn-sm" onclick="deleteCmdFournisseur('${c.id}')">Suppr.</button>
-              </td>
-            </tr>`).join('') : `<tr><td colspan="8"><div class="empty">Aucune commande en attente</div></td></tr>`}
-        </tbody>
-      </table>
-    </div>`;
+    <div class="page-sub" style="margin:-6px 0 14px;">Le stock et la dépense ne bougent qu'au passage au statut "Reçue". Chaque commande forme un bloc indépendant : réceptionner un bloc ne touche pas les autres.</div>
+
+    ${lots.length ? lots.map(lignes => {
+      const lotId = lignes[0].lot_id || lignes[0].id;
+      const total = lignes.reduce((s, c) => s + c.quantite * c.prix_achat_unitaire, 0);
+      return `
+      <div class="card" style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label class="page-sub" style="margin:0;">Date de commande</label>
+            <input type="date" value="${lignes[0].date_commande || ''}" onchange="_cfDateLot('${lotId}', this.value)" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;">
+            <button class="btn btn-ghost btn-sm" onclick='openCmdFournisseurModal("${lotId}")'>+ Ligne</button>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick='ouvrirReceptionModal(null, ${JSON.stringify(lignes.map(l=>l.id))})'>Réceptionner le bloc</button>
+        </div>
+        <table>
+          <thead><tr><th>Statut</th><th>Produit</th><th>Marque</th><th>Qté</th><th>Prix achat unit.</th><th>Total</th><th></th></tr></thead>
+          <tbody>
+            ${lignes.map(c => `
+              <tr>
+                <td>
+                  <select onchange="changerStatutFournisseur('${c.id}', this.value)" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12.5px;">
+                    ${Object.keys(STATUT_FOURN).filter(s => s !== 'recue').map(s => `<option value="${s}" ${c.statut===s?'selected':''}>${STATUT_FOURN[s].label}</option>`).join('')}
+                  </select>
+                </td>
+                <td><b>${esc(c.produit_nom)}</b>${c.est_frais ? ' <span class="badge badge-gold">Frais</span>' : ''}</td>
+                <td>${esc(c.marque) || '—'}</td>
+                <td>${c.quantite}</td>
+                <td>${fmtEUR(c.prix_achat_unitaire)}</td>
+                <td>${fmtEUR(c.quantite * c.prix_achat_unitaire)}</td>
+                <td style="display:flex;gap:6px;">
+                  <button class="btn btn-primary btn-sm" onclick="ouvrirReceptionModal('${c.id}')">Réceptionner</button>
+                  <button class="btn btn-ghost btn-sm" onclick="deleteCmdFournisseur('${c.id}')">Suppr.</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+          <tfoot><tr><td colspan="4" style="text-align:right;">Total du bloc</td><td colspan="2" style="font-weight:700;">${fmtEUR(total)}</td><td></td></tr></tfoot>
+        </table>
+      </div>`;
+    }).join('') : `<div class="empty">Aucune commande en attente</div>`}
+
+    ${lotsRecus.length ? `
+    <div class="page-sub" style="margin:22px 0 10px;font-weight:700;">Reçues récemment</div>
+    ${lotsRecus.map(lignes => {
+      const total = lignes.reduce((s, c) => s + c.quantite * c.prix_achat_unitaire, 0);
+      return `
+      <div class="card" style="margin-bottom:10px;opacity:0.85;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div class="page-sub">Reçue le ${fmtDate(lignes[0].date_reception)} — ${lignes.map(l=>esc(l.produit_nom)).join(', ')}</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="page-sub">${fmtEUR(total)}</span>
+            <button class="btn btn-ghost btn-sm" onclick='annulerReceptionLot(${JSON.stringify(lignes.map(l=>l.id))})'>Annuler la réception</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('')}` : ''}
+  `;
 }
 
 async function changerStatutFournisseur(id, statut) {
@@ -345,15 +387,14 @@ async function changerStatutFournisseur(id, statut) {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
 }
 
-function _chToggleAllFournisseur(checked) {
-  document.querySelectorAll('.ch-cf-sel').forEach(el => el.checked = checked);
-}
-
-function openCmdFournisseurModal() {
+function openCmdFournisseurModal(lotId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const nouveauLot = lotId || crypto.randomUUID();
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal">
-    <h3>Nouvelle commande fournisseur</h3>
+  bg.innerHTML = `<div class="modal" data-lot="${nouveauLot}">
+    <h3>${lotId ? 'Ajouter une ligne au bloc' : 'Nouvelle commande (nouveau bloc)'}</h3>
+    ${!lotId ? `<div class="field"><label>Date de commande</label><input id="cf-date-commande" type="date" value="${today}"></div>` : ''}
     <div class="field"><label>Produit</label>
       <select id="cf-produit" onchange="_cfAutofill()">
         <option value="">— Nouveau produit —</option>
@@ -373,11 +414,11 @@ function openCmdFournisseurModal() {
       </select>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
-      <button class="btn btn-primary" onclick="saveCmdFournisseur()">Enregistrer</button>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove();renderChimie()">Terminé</button>
+      <button class="btn btn-primary" onclick="saveCmdFournisseur()">Ajouter (et continuer)</button>
     </div>
   </div>`;
-  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  bg.addEventListener('click', e => { if (e.target === bg) { bg.remove(); renderChimie(); } });
   document.body.appendChild(bg);
 }
 
@@ -431,11 +472,17 @@ function _cfAutofill() {
 }
 
 async function saveCmdFournisseur() {
+  const modal = document.querySelector('.modal-bg .modal');
+  const lotId = modal.dataset.lot;
   const produitId = document.getElementById('cf-produit').value || null;
   const opt = document.getElementById('cf-produit').selectedOptions[0];
   const nom = document.getElementById('cf-nom').value.trim() || (produitId ? opt.textContent : '');
   if (!nom) { toast('Produit requis', 'err'); return; }
+  const dateCommandeInput = document.getElementById('cf-date-commande');
+  const dateCommande = dateCommandeInput ? dateCommandeInput.value : (_chFournisseur.find(c => c.lot_id === lotId)?.date_commande || new Date().toISOString().slice(0, 10));
   const body = {
+    lot_id: lotId,
+    date_commande: dateCommande,
     produit_id: produitId,
     produit_nom: nom,
     marque: document.getElementById('cf-marque').value.trim() || null,
@@ -446,9 +493,13 @@ async function saveCmdFournisseur() {
   };
   try {
     await sbInsert('compta_commandes_fournisseur', body);
-    document.querySelector('.modal-bg')?.remove();
-    toast('Commande enregistrée', 'ok');
-    await renderChimie();
+    toast('Ligne ajoutée au bloc', 'ok');
+    _chFournisseur = await sbSelect('compta_commandes_fournisseur', 'select=*&recue=eq.false&order=date_commande.desc,created_at.desc');
+    document.getElementById('cf-produit').value = '';
+    document.getElementById('cf-nom').value = '';
+    document.getElementById('cf-marque').value = '';
+    document.getElementById('cf-qte').value = 1;
+    document.getElementById('cf-prix').value = 0;
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
@@ -458,12 +509,11 @@ async function deleteCmdFournisseur(id) {
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-function ouvrirReceptionModal(id, groupe) {
+function ouvrirReceptionModal(id, lotIds) {
   let ids = [];
   let titre, sousTitre;
-  if (groupe) {
-    ids = [...document.querySelectorAll('.ch-cf-sel:checked')].map(el => el.value);
-    if (!ids.length) { toast('Sélectionne au moins une commande', 'err'); return; }
+  if (lotIds) {
+    ids = lotIds;
     const lignes = _chFournisseur.filter(c => ids.includes(c.id));
     const total = lignes.reduce((s, c) => s + c.quantite * c.prix_achat_unitaire, 0);
     titre = `Réceptionner ${lignes.length} commande(s)`;
@@ -514,6 +564,35 @@ async function receptionnerCommandes(ids) {
     }
     document.querySelector('.modal-bg')?.remove();
     toast(`${ids.length} commande(s) réceptionnée(s), stock mis à jour`, 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function _cfDateLot(lotId, date) {
+  const lignes = _chFournisseur.filter(c => (c.lot_id || c.id) === lotId);
+  try {
+    for (const l of lignes) await sbUpdate('compta_commandes_fournisseur', l.id, { date_commande: date });
+    lignes.forEach(l => l.date_commande = date);
+    toast('Date de commande mise à jour', 'ok');
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
+}
+
+async function annulerReceptionLot(ids) {
+  if (!confirm('Annuler la réception de ce bloc ? Le stock reçu sera retiré et il repassera en "En cours".')) return;
+  try {
+    for (const id of ids) {
+      const c = _chFournisseurRecues.find(x => x.id === id);
+      if (!c) continue;
+      if (!c.est_frais) {
+        const produit = c.produit_id ? _chProduits.find(p => p.id === c.produit_id) : _chProduits.find(p => p.nom === c.produit_nom);
+        if (produit) {
+          const nouveauStock = Number(produit.stock_reel || 0) - Number(c.quantite || 0);
+          await sbUpdate('compta_produits', produit.id, { stock_reel: nouveauStock });
+        }
+      }
+      await sbUpdate('compta_commandes_fournisseur', id, { recue: false, statut: 'en_cours', date_reception: null });
+    }
+    toast('Réception annulée, commande remise en cours', 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
