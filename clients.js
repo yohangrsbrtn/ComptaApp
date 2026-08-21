@@ -23,7 +23,7 @@ async function renderClients() {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Client</th><th>Tarif</th><th>Pack</th><th>Paiement</th><th>Fin coaching</th><th>Bilan</th><th></th></tr></thead>
+        <thead><tr><th>Client</th><th>Tarif</th><th>Pack</th><th>Paiement</th><th>Fin coaching</th><th></th></tr></thead>
         <tbody>
           ${list.length ? list.map(c => `
             <tr style="cursor:pointer" onclick="openClientModal('${c.id}')">
@@ -32,12 +32,11 @@ async function renderClients() {
               <td>${esc(c.pack) || '—'}</td>
               <td><span class="badge ${c.mode_paiement === 'ESP' ? 'badge-gold' : c.mode_paiement === 'Gocardless' ? 'badge-blue' : 'badge-green'}">${esc(c.mode_paiement) || '—'}</span> ${c.moy_paiement ? `<span class="page-sub">${esc(c.moy_paiement)}</span>` : ''}</td>
               <td>${fmtDate(c.date_fin) || '—'}</td>
-              <td>${c.bilan ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>'}</td>
               <td onclick="event.stopPropagation()" style="display:flex;gap:6px;">
                 <button class="btn btn-ghost btn-sm" onclick="toggleStatutClient('${c.id}')">${(c.statut||'actif')==='actif' ? 'Passer en ancien' : 'Repasser en actif'}</button>
                 <button class="btn btn-ghost btn-sm" onclick="deleteClient('${c.id}','${esc(c.prenom)} ${esc(c.nom)}')">Suppr.</button>
               </td>
-            </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucun client</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucun client</div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -82,14 +81,11 @@ function _clientForm(c) {
     <div class="field"><label>Salle de sport</label><input id="cf-salle" value="${esc(c.salle_sport)}"></div>
     <div class="field"><label>Objectifs</label><input id="cf-objectifs" value="${esc(c.objectifs)}"></div>
     <div class="field"><label>Adresse (pour facture)</label><textarea id="cf-adresse" rows="2">${esc(c.adresse)}</textarea></div>
-    <div class="row2">
-      <div class="checkbox-row"><input id="cf-bilan" type="checkbox" ${c.bilan?'checked':''}> <label>Bilan activé</label></div>
-      <div class="field"><label>Statut</label>
-        <select id="cf-statut">
-          <option value="actif" ${(c.statut||'actif')==='actif'?'selected':''}>Actif</option>
-          <option value="ancien" ${c.statut==='ancien'?'selected':''}>Ancien</option>
-        </select>
-      </div>
+    <div class="field"><label>Statut</label>
+      <select id="cf-statut">
+        <option value="actif" ${(c.statut||'actif')==='actif'?'selected':''}>Actif</option>
+        <option value="ancien" ${c.statut==='ancien'?'selected':''}>Ancien</option>
+      </select>
     </div>
     <div class="field"><label>Notes</label><textarea id="cf-notes" rows="2">${esc(c.notes)}</textarea></div>
   `;
@@ -126,7 +122,6 @@ async function saveClient(id) {
     salle_sport: document.getElementById('cf-salle').value.trim() || null,
     objectifs: document.getElementById('cf-objectifs').value.trim() || null,
     adresse: document.getElementById('cf-adresse').value.trim() || null,
-    bilan: document.getElementById('cf-bilan').checked,
     statut: document.getElementById('cf-statut').value,
     notes: document.getElementById('cf-notes').value.trim() || null,
     updated_at: new Date().toISOString(),
