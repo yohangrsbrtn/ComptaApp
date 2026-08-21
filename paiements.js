@@ -88,16 +88,17 @@ function _matchClientGC(nomGC) {
 }
 
 async function _renderGoCardless() {
+  await _syncGoCardlessSilencieux();
   _gcRows = await sbSelect('compta_gocardless_transactions', 'importe=eq.false&order=charge_date.desc');
   const total = _gcRows.reduce((s, r) => s + Number(r.montant || 0), 0);
 
   document.getElementById('pa-body').innerHTML = `
     <div class="toolbar">
-      <button class="btn btn-primary" onclick="lancerSyncGoCardless()">Synchroniser GoCardless</button>
+      <button class="btn btn-primary" onclick="lancerSyncGoCardless()">Resynchroniser</button>
       <div style="flex:1;"></div>
       <button class="btn btn-ghost" onclick="importerToutGoCardless()">Importer tout (correspondances trouvées)</button>
     </div>
-    <div class="page-sub" style="margin:-8px 0 14px;">${_gcRows.length} paiement(s) en attente de rapprochement · ${fmtEUR(total)}</div>
+    <div class="page-sub" style="margin:-8px 0 14px;">Synchronisé automatiquement à l'ouverture — seuls les paiements réellement <b>versés</b> par GoCardless apparaissent ici · ${_gcRows.length} en attente de rapprochement · ${fmtEUR(total)}</div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Date</th><th>Client GoCardless</th><th>Montant</th><th>Rattacher à</th><th></th></tr></thead>
@@ -121,6 +122,17 @@ async function _renderGoCardless() {
         </tbody>
       </table>
     </div>`;
+}
+
+async function _syncGoCardlessSilencieux() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/gocardless-sync`, {
+      method: 'POST', headers: supaHeaders(),
+    });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => null);
+    if (data?.ok && data.nouveaux > 0) toast(`${data.nouveaux} nouveau(x) paiement(s) versé(s) par GoCardless`, 'ok');
+  } catch { /* silencieux : la synchro manuelle affichera l'erreur si besoin */ }
 }
 
 async function lancerSyncGoCardless() {
