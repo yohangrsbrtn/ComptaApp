@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), { status: 401, headers: corsHeaders });
   }
   try {
-    const { client_id, prenom, nom, statut, jour_paiement, mode_paiement, moy_paiement } = await req.json();
+    const { client_id, prenom, nom, statut, jour_paiement, mode_paiement, moy_paiement, date_fin } = await req.json();
     if (!client_id || !nom) {
       return new Response(JSON.stringify({ ok: false, error: 'client_id et nom requis' }), { status: 400, headers: corsHeaders });
     }
@@ -41,6 +41,7 @@ Deno.serve(async (req) => {
     if (jour_paiement !== undefined) champsFacturation.jour_paiement = jour_paiement;
     if (mode_paiement !== undefined) champsFacturation.mode_paiement = mode_paiement;
     if (moy_paiement !== undefined) champsFacturation.moy_paiement = moy_paiement;
+    if (date_fin !== undefined) champsFacturation.date_fin = date_fin;
 
     const { data: existant } = await supabase
       .from('compta_clients')
