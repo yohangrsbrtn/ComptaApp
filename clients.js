@@ -33,7 +33,10 @@ async function renderClients() {
               <td><span class="badge ${c.mode_paiement === 'ESP' ? 'badge-gold' : c.mode_paiement === 'Gocardless' ? 'badge-blue' : 'badge-green'}">${esc(c.mode_paiement) || '—'}</span> ${c.moy_paiement ? `<span class="page-sub">${esc(c.moy_paiement)}</span>` : ''}</td>
               <td>${fmtDate(c.date_fin) || '—'}</td>
               <td>${c.bilan ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>'}</td>
-              <td onclick="event.stopPropagation()"><button class="btn btn-ghost btn-sm" onclick="deleteClient('${c.id}','${esc(c.prenom)} ${esc(c.nom)}')">Suppr.</button></td>
+              <td onclick="event.stopPropagation()" style="display:flex;gap:6px;">
+                <button class="btn btn-ghost btn-sm" onclick="toggleStatutClient('${c.id}')">${(c.statut||'actif')==='actif' ? 'Passer en ancien' : 'Repasser en actif'}</button>
+                <button class="btn btn-ghost btn-sm" onclick="deleteClient('${c.id}','${esc(c.prenom)} ${esc(c.nom)}')">Suppr.</button>
+              </td>
             </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucun client</div></td></tr>`}
         </tbody>
       </table>
@@ -136,6 +139,18 @@ async function saveClient(id) {
     toast('Client enregistré', 'ok');
     await loadClients(true);
     await renderClients();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function toggleStatutClient(id) {
+  const c = S.clients.find(x => x.id === id);
+  if (!c) return;
+  const nouveauStatut = (c.statut || 'actif') === 'actif' ? 'ancien' : 'actif';
+  try {
+    await sbUpdate('compta_clients', id, { statut: nouveauStatut });
+    await loadClients(true);
+    await renderClients();
+    toast(nouveauStatut === 'ancien' ? 'Passé en ancien' : 'Repassé en actif', 'ok');
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
