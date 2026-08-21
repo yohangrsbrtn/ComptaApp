@@ -299,12 +299,15 @@ const STATUT_FOURN = {
 };
 
 function _tplFournisseur() {
+  // Groupé par date de commande : deux blocs mis à la même date fusionnent
+  // automatiquement (ex: après une annulation de réception qui recrée une
+  // ligne par produit à l'identique).
   const parLot = {};
-  _chFournisseur.forEach(c => { const k = c.lot_id || c.id; (parLot[k] = parLot[k] || []).push(c); });
+  _chFournisseur.forEach(c => { const k = c.date_commande || `nodate-${c.lot_id || c.id}`; (parLot[k] = parLot[k] || []).push(c); });
   const lots = Object.values(parLot).sort((a, b) => (b[0].date_commande || '').localeCompare(a[0].date_commande || ''));
 
   const parLotRecu = {};
-  _chFournisseurRecues.forEach(c => { const k = c.lot_id || c.id; (parLotRecu[k] = parLotRecu[k] || []).push(c); });
+  _chFournisseurRecues.forEach(c => { const k = c.date_reception || `nodate-${c.id}`; (parLotRecu[k] = parLotRecu[k] || []).push(c); });
   const lotsRecus = Object.values(parLotRecu).sort((a, b) => (b[0].date_reception || '').localeCompare(a[0].date_reception || ''));
 
   return `
@@ -322,15 +325,15 @@ function _tplFournisseur() {
     <div class="page-sub" style="margin:-6px 0 14px;">Le stock et la dépense ne bougent qu'au passage au statut "Reçue". Chaque commande forme un bloc indépendant : réceptionner un bloc ne touche pas les autres.</div>
 
     ${lots.length ? lots.map(lignes => {
-      const lotId = lignes[0].lot_id || lignes[0].id;
+      const dateGroupe = lignes[0].date_commande || '';
       const total = lignes.reduce((s, c) => s + c.quantite * c.prix_achat_unitaire, 0);
       return `
       <div class="card" style="margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
           <div style="display:flex;align-items:center;gap:8px;">
             <label class="page-sub" style="margin:0;">Date de commande</label>
-            <input type="date" value="${lignes[0].date_commande || ''}" onchange="_cfDateLot('${lotId}', this.value)" style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;">
-            <button class="btn btn-ghost btn-sm" onclick='openCmdFournisseurModal("${lotId}")'>+ Ligne</button>
+            <input type="date" value="${dateGroupe}" onchange='_cfDateLot(${JSON.stringify(lignes.map(l=>l.id))}, this.value)' style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;">
+            <button class="btn btn-ghost btn-sm" onclick='openCmdFournisseurModal(${JSON.stringify(dateGroupe)})'>+ Ligne</button>
           </div>
           <button class="btn btn-primary btn-sm" onclick='ouvrirReceptionModal(null, ${JSON.stringify(lignes.map(l=>l.id))})'>Réceptionner le bloc</button>
         </div>
@@ -387,14 +390,13 @@ async function changerStatutFournisseur(id, statut) {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
 }
 
-function openCmdFournisseurModal(lotId) {
+function openCmdFournisseurModal(dateGroupe) {
   const today = new Date().toISOString().slice(0, 10);
-  const nouveauLot = lotId || crypto.randomUUID();
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal" data-lot="${nouveauLot}">
-    <h3>${lotId ? 'Ajouter une ligne au bloc' : 'Nouvelle commande (nouveau bloc)'}</h3>
-    ${!lotId ? `<div class="field"><label>Date de commande</label><input id="cf-date-commande" type="date" value="${today}"></div>` : ''}
+  bg.innerHTML = `<div class="modal" data-date-groupe="${dateGroupe || ''}">
+    <h3>${dateGroupe ? 'Ajouter une ligne au bloc' : 'Nouvelle commande (nouveau bloc)'}</h3>
+    ${!dateGroupe ? `<div class="field"><label>Date de commande</label><input id="cf-date-commande" type="date" value="${today}"></div>` : `<div class="page-sub" style="margin-bottom:10px;">Rejoint le bloc du ${fmtDate(dateGroupe)} — même date = fusion automatique.</div>`}
     <div class="field"><label>Produit</label>
       <select id="cf-produit" onchange="_cfAutofill()">
         <option value="">— Nouveau produit —</option>
@@ -473,15 +475,14 @@ function _cfAutofill() {
 
 async function saveCmdFournisseur() {
   const modal = document.querySelector('.modal-bg .modal');
-  const lotId = modal.dataset.lot;
+  const dateGroupe = modal.dataset.dateGroupe;
   const produitId = document.getElementById('cf-produit').value || null;
   const opt = document.getElementById('cf-produit').selectedOptions[0];
   const nom = document.getElementById('cf-nom').value.trim() || (produitId ? opt.textContent : '');
   if (!nom) { toast('Produit requis', 'err'); return; }
   const dateCommandeInput = document.getElementById('cf-date-commande');
-  const dateCommande = dateCommandeInput ? dateCommandeInput.value : (_chFournisseur.find(c => c.lot_id === lotId)?.date_commande || new Date().toISOString().slice(0, 10));
+  const dateCommande = dateCommandeInput ? dateCommandeInput.value : (dateGroupe || new Date().toISOString().slice(0, 10));
   const body = {
-    lot_id: lotId,
     date_commande: dateCommande,
     produit_id: produitId,
     produit_nom: nom,
@@ -568,12 +569,11 @@ async function receptionnerCommandes(ids) {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-async function _cfDateLot(lotId, date) {
-  const lignes = _chFournisseur.filter(c => (c.lot_id || c.id) === lotId);
+async function _cfDateLot(ids, date) {
   try {
-    for (const l of lignes) await sbUpdate('compta_commandes_fournisseur', l.id, { date_commande: date });
-    lignes.forEach(l => l.date_commande = date);
-    toast('Date de commande mise à jour', 'ok');
+    for (const id of ids) await sbUpdate('compta_commandes_fournisseur', id, { date_commande: date });
+    toast('Date mise à jour — fusionné avec le bloc existant si la date correspond', 'ok');
+    await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
 }
 
