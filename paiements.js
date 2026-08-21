@@ -50,6 +50,9 @@ async function _renderPaiementsMois() {
     .map(c => ({ ...c, enRetard: estMoisEnCours && c.jour_paiement && jourAujourdhui > c.jour_paiement, note: notesParClient[c.id]?.note || '' }))
     .sort((a, b) => (a.jour_paiement || 99) - (b.jour_paiement || 99));
 
+  const idsAppTraining = enAttente.map(c => c.apptraining_client_id).filter(Boolean);
+  const dernieresRelances = await _fetchDernieresRelances(idsAppTraining);
+
   document.getElementById('pa-body').innerHTML = `
     <div class="toolbar">
       <select onchange="_paMois=this.value;renderPaiements()" style="background:var(--card2);color:var(--text);border:1px solid var(--border);padding:9px 12px;border-radius:10px;">
@@ -66,7 +69,7 @@ async function _renderPaiementsMois() {
     <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Clients en attente de paiement — ${_paMois} (${enAttente.length})</div>
     <div class="table-wrap" style="margin-bottom:24px;">
       <table>
-        <thead><tr><th>Client</th><th>Jour de paiement prévu</th><th>Moyen</th><th>Statut</th><th>Note</th><th></th></tr></thead>
+        <thead><tr><th>Client</th><th>Jour de paiement prévu</th><th>Moyen</th><th>Statut</th><th>Note</th><th>Dernière relance</th><th></th></tr></thead>
         <tbody>
           ${enAttente.length ? enAttente.map(c => `
             <tr>
@@ -75,11 +78,12 @@ async function _renderPaiementsMois() {
               <td><span class="badge ${c.mode_paiement === 'ESP' ? 'badge-gold' : c.mode_paiement === 'Gocardless' ? 'badge-blue' : 'badge-green'}">${esc(c.mode_paiement) || '—'}</span> ${c.moy_paiement ? `<span class="page-sub">${esc(c.moy_paiement)}</span>` : ''}</td>
               <td>${c.note ? '<span class="badge badge-blue">Noté</span>' : c.enRetard ? '<span class="badge badge-red">En retard</span>' : '<span class="badge badge-muted">En attente</span>'}</td>
               <td style="max-width:220px;cursor:pointer;" onclick='ouvrirNotePaiement("${c.id}", ${JSON.stringify(c.note)})'>${c.note ? `<span class="page-sub">${esc(c.note)}</span>` : '<span class="btn btn-ghost btn-sm">+ Note</span>'}</td>
+              <td>${dernieresRelances[c.apptraining_client_id] ? `<span class="badge badge-gold">Relancé</span> <span class="page-sub">${fmtDate(dernieresRelances[c.apptraining_client_id])}</span>` : '—'}</td>
               <td style="display:flex;gap:6px;">
                 ${c.apptraining_client_id && c.mode_paiement !== 'Gocardless' ? `<button class="btn btn-ghost btn-sm" onclick="relancerPaiementClient('${c.apptraining_client_id}', '${esc(c.prenom)} ${esc(c.nom)}')">Relancer</button>` : ''}
                 <button class="btn btn-primary btn-sm" onclick="ouvrirValidationPaiementClient('${c.id}')">Marquer payé</button>
               </td>
-            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Tous les clients actifs ont payé pour ${_paMois} 🎉</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Tous les clients actifs ont payé pour ${_paMois} 🎉</div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -115,7 +119,26 @@ async function relancerPaiementClient(apptrainingClientId, nomClient) {
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.ok) throw new Error(data?.error || `Erreur (${res.status})`);
     toast(data.sent > 0 ? 'Rappel envoyé' : 'Rappel enregistré (client sans notifications activées)', 'ok');
+    await renderPaiements();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+// Dernière relance de paiement envoyée par client — lue directement dans
+// AppTrainingDatabase (client_notifications, source='rappel_paiement') puisque
+// c'est là que relance-paiement les écrit ; pas de copie locale à tenir à jour.
+async function _fetchDernieresRelances(apptrainingIds) {
+  if (!apptrainingIds.length) return {};
+  try {
+    const res = await fetch(
+      `${TRAINING_SUPABASE_URL}/rest/v1/client_notifications?source=eq.rappel_paiement&client_id=in.(${apptrainingIds.join(',')})&select=client_id,created_at&order=created_at.desc`,
+      { headers: { apikey: TRAINING_ANON_KEY, Authorization: `Bearer ${TRAINING_ANON_KEY}` } }
+    );
+    if (!res.ok) return {};
+    const rows = await res.json();
+    const parClient = {};
+    rows.forEach(r => { if (!parClient[r.client_id]) parClient[r.client_id] = r.created_at; });
+    return parClient;
+  } catch { return {}; }
 }
 
 function ouvrirNotePaiement(clientId, noteActuelle) {

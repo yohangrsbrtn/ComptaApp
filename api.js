@@ -5,6 +5,8 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // que la synchro client entrante, protège la fonction relance-paiement côté coaching.
 const RELANCE_PAIEMENT_URL = 'https://sfacjbwiczwkcjpwneyg.supabase.co/functions/v1/relance-paiement';
 const SYNC_SHARED_SECRET = 'H15Mzf-78UIOvdDywQYzxNOvy1mPstbJhac_r1-tbIE';
+const TRAINING_SUPABASE_URL = 'https://sfacjbwiczwkcjpwneyg.supabase.co';
+const TRAINING_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmYWNqYndpY3p3a2NqcHduZXlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2MjgzNTAsImV4cCI6MjEwMDIwNDM1MH0.mrjPbOuQROMihzxZWrUNbncQIos0jK2VexpQDoRZXzY';
 
 function getAccessToken() { return localStorage.getItem('ca_token') || SUPABASE_ANON_KEY; }
 function isLoggedIn() { return !!localStorage.getItem('ca_token'); }
