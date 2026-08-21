@@ -3,8 +3,14 @@ let _paAnnee = 2026;
 let _paRows = [];
 let _paTab = 'mois';
 
+let _paDerniereSyncGC = 0;
+
 async function renderPaiements() {
   await loadClients();
+  if (Date.now() - _paDerniereSyncGC > 2 * 60 * 1000) {
+    _paDerniereSyncGC = Date.now();
+    await _syncEtImporterAutoGoCardless();
+  }
 
   document.getElementById('root').innerHTML = shell(`
     <div class="topbar">
@@ -88,8 +94,7 @@ function _matchClientGC(nomGC) {
 }
 
 async function _renderGoCardless() {
-  await _syncGoCardlessSilencieux();
-  _gcRows = await sbSelect('compta_gocardless_transactions', 'importe=eq.false&order=charge_date.desc');
+  _gcRows = await sbSelect('compta_gocardless_transactions', 'importe=eq.false&order=date_versement.desc');
   const total = _gcRows.reduce((s, r) => s + Number(r.montant || 0), 0);
 
   document.getElementById('pa-body').innerHTML = `
@@ -98,16 +103,16 @@ async function _renderGoCardless() {
       <div style="flex:1;"></div>
       <button class="btn btn-ghost" onclick="importerToutGoCardless()">Importer tout (correspondances trouvées)</button>
     </div>
-    <div class="page-sub" style="margin:-8px 0 14px;">Synchronisé automatiquement à l'ouverture — seuls les paiements réellement <b>versés</b> par GoCardless apparaissent ici · ${_gcRows.length} en attente de rapprochement · ${fmtEUR(total)}</div>
+    <div class="page-sub" style="margin:-8px 0 14px;">Synchronisé automatiquement à l'ouverture — les correspondances certaines partent direct dans "Par mois". Seuls les paiements réellement <b>versés</b> apparaissent ici · ${_gcRows.length} sans correspondance sûre · ${fmtEUR(total)}</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Client GoCardless</th><th>Montant</th><th>Rattacher à</th><th></th></tr></thead>
+        <thead><tr><th>Date de versement</th><th>Client GoCardless</th><th>Montant</th><th>Rattacher à</th><th></th></tr></thead>
         <tbody>
           ${_gcRows.length ? _gcRows.map(r => {
             const match = _matchClientGC(r.nom_client_gc);
             return `
             <tr id="gc-row-${r.id}">
-              <td>${fmtDate(r.charge_date)}</td>
+              <td>${fmtDate(r.date_versement || r.charge_date)}</td>
               <td>${esc(r.nom_client_gc) || '—'}<div class="page-sub">${esc(r.description) || ''}</div></td>
               <td>${fmtEUR(r.montant)}</td>
               <td>
@@ -124,17 +129,6 @@ async function _renderGoCardless() {
     </div>`;
 }
 
-async function _syncGoCardlessSilencieux() {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/gocardless-sync`, {
-      method: 'POST', headers: supaHeaders(),
-    });
-    if (!res.ok) return;
-    const data = await res.json().catch(() => null);
-    if (data?.ok && data.nouveaux > 0) toast(`${data.nouveaux} nouveau(x) paiement(s) versé(s) par GoCardless`, 'ok');
-  } catch { /* silencieux : la synchro manuelle affichera l'erreur si besoin */ }
-}
-
 async function lancerSyncGoCardless() {
   toast('Synchronisation en cours…', 'ok');
   try {
@@ -145,30 +139,68 @@ async function lancerSyncGoCardless() {
     let data;
     try { data = await res.json(); } catch { throw new Error(`Réponse invalide du serveur (${res.status})`); }
     if (!data.ok) throw new Error(data.error || 'Erreur de synchronisation');
-    toast(`${data.nouveaux} nouveau(x) paiement(s) importé(s) de GoCardless`, 'ok');
+    const importes = await _autoImporterMatchesGC();
+    toast(importes > 0 ? `${importes} paiement(s) rattaché(s) automatiquement` : `${data.nouveaux} nouveau(x) paiement(s) versé(s)`, 'ok');
+    _paDerniereSyncGC = Date.now();
     await renderPaiements();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function _creerPaiementDepuisGC(row, clientId) {
+  const client = clientId ? S.clients.find(c => c.id === clientId) : null;
+  const dateVersement = row.date_versement || row.charge_date;
+  const nomClient = client ? `${client.prenom} ${client.nom}` : (row.nom_client_gc || 'Inconnu');
+  const mois = MOIS[new Date(dateVersement).getMonth()];
+  const annee = new Date(dateVersement).getFullYear();
+  const paiement = await sbInsert('compta_paiements', {
+    client_id: clientId, nom_client: nomClient, mois, annee: annee || 2026,
+    date_paiement: dateVersement, mt_suivi: row.montant, mt_seance: 0,
+    banque: 'GoCardless', decla_urssaf: false,
+  });
+  await sbUpdate('compta_gocardless_transactions', row.id, { importe: true, client_id: clientId, paiement_id: paiement[0].id });
+  return paiement[0];
 }
 
 async function importerGoCardless(id) {
   const row = _gcRows.find(r => r.id === id);
   if (!row) return;
   const clientId = document.getElementById(`gc-client-${id}`).value || null;
-  const client = clientId ? S.clients.find(c => c.id === clientId) : null;
-  const nomClient = client ? `${client.prenom} ${client.nom}` : (row.nom_client_gc || 'Inconnu');
-  const mois = MOIS[new Date(row.charge_date).getMonth()];
-  const annee = new Date(row.charge_date).getFullYear();
   try {
-    const paiement = await sbInsert('compta_paiements', {
-      client_id: clientId, nom_client: nomClient, mois, annee: annee || 2026,
-      date_paiement: row.charge_date, mt_suivi: row.montant, mt_seance: 0,
-      banque: 'GoCardless', decla_urssaf: false,
-    });
-    await sbUpdate('compta_gocardless_transactions', id, { importe: true, client_id: clientId, paiement_id: paiement[0].id });
+    await _creerPaiementDepuisGC(row, clientId);
     document.getElementById(`gc-row-${id}`)?.remove();
     toast('Paiement importé', 'ok');
     _gcRows = _gcRows.filter(r => r.id !== id);
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+// Importe automatiquement les paiements en attente dont le client correspond
+// de façon certaine (nom de famille exact) — ils apparaissent directement dans
+// "Par mois" et comptent dans les revenus, sans étape manuelle. Les paiements
+// sans correspondance sûre restent dans l'onglet GoCardless pour rattachement à la main.
+async function _autoImporterMatchesGC() {
+  const enAttente = await sbSelect('compta_gocardless_transactions', 'importe=eq.false');
+  let importes = 0;
+  for (const row of enAttente) {
+    const match = _matchClientGC(row.nom_client_gc);
+    if (!match) continue;
+    try { await _creerPaiementDepuisGC(row, match.id); importes++; }
+    catch { /* on retentera au prochain cycle */ }
+  }
+  return importes;
+}
+
+// Synchronise GoCardless en silence et rattache automatiquement ce qui peut
+// l'être — appelé à l'ouverture de la page Paiements.
+async function _syncEtImporterAutoGoCardless() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/gocardless-sync`, { method: 'POST', headers: supaHeaders() });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => null);
+    if (!data?.ok) return;
+    const importes = await _autoImporterMatchesGC();
+    if (importes > 0) toast(`${importes} paiement(s) GoCardless versé(s) rattaché(s) automatiquement`, 'ok');
+    else if (data.nouveaux > 0) toast(`${data.nouveaux} nouveau(x) paiement(s) versé(s) — à rattacher dans l'onglet GoCardless`, 'ok');
+  } catch { /* silencieux : la synchro manuelle affichera l'erreur si besoin */ }
 }
 
 async function importerToutGoCardless() {

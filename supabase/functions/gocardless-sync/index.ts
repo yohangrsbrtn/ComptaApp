@@ -1,11 +1,14 @@
-// Récupère les paiements payés (paid_out) depuis GoCardless et les met en file
-// d'attente de rapprochement (compta_gocardless_transactions) — jamais d'écriture
-// directe dans compta_paiements, le coach valide/rattache chaque ligne dans l'app.
+// Récupère les VIREMENTS réellement arrivés sur le compte bancaire (payouts
+// status=paid — pas juste payment status=paid_out, qui peut être atteint avant
+// que l'argent soit effectivement là) et met en file d'attente de rapprochement
+// (compta_gocardless_transactions) — jamais d'écriture directe dans compta_paiements,
+// c'est paiements.js qui rapproche/importe ensuite.
 //
 // Montant importé = NET de la commission GoCardless (le coach veut voir directement
 // ce qu'il encaisse réellement par client, pas le brut avec la commission à part).
-// On attend le statut "paid_out" (pas "confirmed") car la commission exacte n'est
-// connue qu'une fois le virement effectué (payout_items), pas au moment du prélèvement.
+// La date retenue (date_versement) est celle du virement (payout.arrival_date),
+// pas la date de prélèvement chez le client (charge_date) — c'est cette date de
+// versement qui doit apparaître et compter dans les paiements clients.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const GC_TOKEN = Deno.env.get('GOCARDLESS_ACCESS_TOKEN')!;
@@ -62,30 +65,30 @@ async function nomClient(customerId: string | null): Promise<string | null> {
   }
 }
 
-// Récupère (et met en cache) la commission exacte prélevée pour chaque paiement
-// d'un virement (payout) donné — évite de refaire l'appel pour chaque paiement
-// d'un même virement groupé.
-async function feesDuPayout(payoutId: string): Promise<Map<string, number>> {
-  if (payoutFeesCache.has(payoutId)) return payoutFeesCache.get(payoutId)!;
+// Pour un virement (payout) donné : le montant brut de chaque paiement inclus
+// (type "payment") et la commission GoCardless exacte prélevée dessus (type
+// "gocardless_fee", en centimes négatifs). Tout vient de payout_items — pas
+// besoin de re-questionner /payments pour le montant, seulement pour les
+// métadonnées (client, description).
+async function itemsDuPayout(payoutId: string): Promise<{ montants: Map<string, number>; fees: Map<string, number> }> {
+  const montants = new Map<string, number>();
   const fees = new Map<string, number>();
-  try {
-    let after: string | null = null;
-    do {
-      const qs = new URLSearchParams({ payout: payoutId, limit: '500' });
-      if (after) qs.set('after', after);
-      const data = await gcFetch(`/payout_items?${qs.toString()}`);
-      for (const item of data.payout_items) {
-        if (item.type === 'gocardless_fee' && item.links?.payment) {
-          fees.set(item.links.payment, (fees.get(item.links.payment) || 0) + Math.round(parseFloat(item.amount)));
-        }
+  let after: string | null = null;
+  do {
+    const qs = new URLSearchParams({ payout: payoutId, limit: '500' });
+    if (after) qs.set('after', after);
+    const data = await gcFetch(`/payout_items?${qs.toString()}`);
+    for (const item of data.payout_items) {
+      if (!item.links?.payment) continue;
+      if (item.type === 'payment_paid_out') {
+        montants.set(item.links.payment, (montants.get(item.links.payment) || 0) + Math.round(parseFloat(item.amount)));
+      } else if (item.type === 'gocardless_fee') {
+        fees.set(item.links.payment, (fees.get(item.links.payment) || 0) + Math.round(parseFloat(item.amount)));
       }
-      after = data.meta?.cursors?.after ?? null;
-    } while (after);
-  } catch {
-    // pas grave : on retombera sur le montant brut pour ce paiement
-  }
-  payoutFeesCache.set(payoutId, fees);
-  return fees;
+    }
+    after = data.meta?.cursors?.after ?? null;
+  } while (after);
+  return { montants, fees };
 }
 
 const corsHeaders = {
@@ -96,49 +99,57 @@ const corsHeaders = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   try {
-    const tousLesPaiements: any[] = [];
-    let after: string | null = null;
+    const tousLesPayouts: any[] = [];
+    let afterPayout: string | null = null;
     do {
-      const qs = new URLSearchParams({ limit: '200', status: 'paid_out' });
-      if (after) qs.set('after', after);
-      const data = await gcFetch(`/payments?${qs.toString()}`);
-      tousLesPaiements.push(...data.payments);
-      after = data.meta?.cursors?.after ?? null;
-    } while (after);
+      const qs = new URLSearchParams({ limit: '200', status: 'paid' });
+      if (afterPayout) qs.set('after', afterPayout);
+      const data = await gcFetch(`/payouts?${qs.toString()}`);
+      tousLesPayouts.push(...data.payouts);
+      afterPayout = data.meta?.cursors?.after ?? null;
+    } while (afterPayout);
 
     let nouveaux = 0;
-    for (const p of tousLesPaiements) {
-      const { data: existant } = await supabase
-        .from('compta_gocardless_transactions')
-        .select('id')
-        .eq('gc_payment_id', p.id)
-        .maybeSingle();
-      if (existant) continue;
-
-      const customerId = await customerIdViaMandate(p.links?.mandate);
-      const nom = await nomClient(customerId);
-
-      let montantCentimes = p.amount;
-      if (p.links?.payout) {
-        const fees = await feesDuPayout(p.links.payout);
-        const feeCentimes = fees.get(p.id); // négatif
-        if (feeCentimes) montantCentimes = p.amount + feeCentimes;
+    let totalPaiements = 0;
+    for (const payout of tousLesPayouts) {
+      let montants: Map<string, number>, fees: Map<string, number>;
+      try {
+        ({ montants, fees } = await itemsDuPayout(payout.id));
+      } catch {
+        continue; // virement archivé ou inaccessible : on l'ignore plutôt que de tout stopper
       }
+      for (const [paymentId, montantBrut] of montants) {
+        totalPaiements++;
+        const { data: existant } = await supabase
+          .from('compta_gocardless_transactions')
+          .select('id')
+          .eq('gc_payment_id', paymentId)
+          .maybeSingle();
+        if (existant) continue;
 
-      await supabase.from('compta_gocardless_transactions').insert({
-        gc_payment_id: p.id,
-        montant: montantCentimes / 100,
-        devise: p.currency,
-        statut: p.status,
-        charge_date: p.charge_date,
-        description: p.description || null,
-        gc_customer_id: customerId,
-        nom_client_gc: nom,
-      });
-      nouveaux++;
+        const p = (await gcFetch(`/payments/${paymentId}`)).payments;
+        const customerId = await customerIdViaMandate(p.links?.mandate);
+        const nom = await nomClient(customerId);
+        const feeCentimes = fees.get(paymentId) || 0; // négatif
+        const montantCentimes = montantBrut + feeCentimes;
+
+        await supabase.from('compta_gocardless_transactions').insert({
+          gc_payment_id: paymentId,
+          montant: montantCentimes / 100,
+          devise: p.currency,
+          statut: p.status,
+          charge_date: p.charge_date,
+          date_versement: payout.arrival_date,
+          payout_id: payout.id,
+          description: p.description || null,
+          gc_customer_id: customerId,
+          nom_client_gc: nom,
+        });
+        nouveaux++;
+      }
     }
 
-    return new Response(JSON.stringify({ ok: true, total: tousLesPaiements.length, nouveaux }), {
+    return new Response(JSON.stringify({ ok: true, total: totalPaiements, nouveaux }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {
