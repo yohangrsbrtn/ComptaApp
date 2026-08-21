@@ -34,6 +34,10 @@ async function renderPaiements() {
 
 async function _renderPaiementsMois() {
   _paRows = await sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}&order=date_paiement.asc`);
+  const notes = await sbSelect('compta_notes_paiement', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}`);
+  const notesParClient = {};
+  notes.forEach(n => notesParClient[n.client_id] = n);
+
   const totalSuivi = _paRows.reduce((s, p) => s + Number(p.mt_suivi || 0), 0);
   const totalSeance = _paRows.reduce((s, p) => s + Number(p.mt_seance || 0), 0);
   const totalUrssaf = _paRows.filter(p => p.decla_urssaf).reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
@@ -43,7 +47,7 @@ async function _renderPaiementsMois() {
   const jourAujourdhui = new Date().getDate();
   const enAttente = S.clients
     .filter(c => c.statut === 'actif' && !clientsPayes.has(c.id))
-    .map(c => ({ ...c, enRetard: estMoisEnCours && c.jour_paiement && jourAujourdhui > c.jour_paiement }))
+    .map(c => ({ ...c, enRetard: estMoisEnCours && c.jour_paiement && jourAujourdhui > c.jour_paiement, note: notesParClient[c.id]?.note || '' }))
     .sort((a, b) => (a.jour_paiement || 99) - (b.jour_paiement || 99));
 
   document.getElementById('pa-body').innerHTML = `
@@ -62,16 +66,17 @@ async function _renderPaiementsMois() {
     <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Clients en attente de paiement — ${_paMois} (${enAttente.length})</div>
     <div class="table-wrap" style="margin-bottom:24px;">
       <table>
-        <thead><tr><th>Client</th><th>Jour de paiement prévu</th><th>Moyen</th><th>Statut</th><th></th></tr></thead>
+        <thead><tr><th>Client</th><th>Jour de paiement prévu</th><th>Moyen</th><th>Statut</th><th>Note</th><th></th></tr></thead>
         <tbody>
           ${enAttente.length ? enAttente.map(c => `
             <tr>
               <td><b>${esc(c.prenom)} ${esc(c.nom)}</b></td>
               <td>${c.jour_paiement ? `le ${c.jour_paiement}` : '—'}</td>
               <td><span class="badge ${c.mode_paiement === 'ESP' ? 'badge-gold' : c.mode_paiement === 'Gocardless' ? 'badge-blue' : 'badge-green'}">${esc(c.mode_paiement) || '—'}</span> ${c.moy_paiement ? `<span class="page-sub">${esc(c.moy_paiement)}</span>` : ''}</td>
-              <td>${c.enRetard ? '<span class="badge badge-red">En retard</span>' : '<span class="badge badge-muted">En attente</span>'}</td>
+              <td>${c.note ? '<span class="badge badge-blue">Noté</span>' : c.enRetard ? '<span class="badge badge-red">En retard</span>' : '<span class="badge badge-muted">En attente</span>'}</td>
+              <td style="max-width:220px;cursor:pointer;" onclick='ouvrirNotePaiement("${c.id}", ${JSON.stringify(c.note)})'>${c.note ? `<span class="page-sub">${esc(c.note)}</span>` : '<span class="btn btn-ghost btn-sm">+ Note</span>'}</td>
               <td><button class="btn btn-primary btn-sm" onclick="ouvrirValidationPaiementClient('${c.id}')">Marquer payé</button></td>
-            </tr>`).join('') : `<tr><td colspan="5"><div class="empty">Tous les clients actifs ont payé pour ${_paMois} 🎉</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Tous les clients actifs ont payé pour ${_paMois} 🎉</div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -94,6 +99,48 @@ async function _renderPaiementsMois() {
         </tbody>
       </table>
     </div>`;
+}
+
+function ouvrirNotePaiement(clientId, noteActuelle) {
+  const c = S.clients.find(x => x.id === clientId);
+  if (!c) return;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Note — ${esc(c.prenom)} ${esc(c.nom)} (${_paMois})</h3>
+    <div class="field"><label>Note</label><textarea id="np-note" rows="3" placeholder="ex: a payé en avance le mois dernier, offert, etc.">${esc(noteActuelle || '')}</textarea></div>
+    <div class="modal-actions">
+      ${noteActuelle ? `<button class="btn btn-ghost" onclick="supprimerNotePaiement('${clientId}')">Supprimer</button>` : ''}
+      <div style="flex:1;"></div>
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="sauvegarderNotePaiement('${clientId}')">Enregistrer</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function sauvegarderNotePaiement(clientId) {
+  const note = document.getElementById('np-note').value.trim();
+  if (!note) { toast('Note vide', 'err'); return; }
+  try {
+    const existantes = await sbSelect('compta_notes_paiement', `client_id=eq.${clientId}&mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}`);
+    if (existantes.length) await sbUpdate('compta_notes_paiement', existantes[0].id, { note });
+    else await sbInsert('compta_notes_paiement', { client_id: clientId, mois: _paMois, annee: _paAnnee, note });
+    document.querySelector('.modal-bg')?.remove();
+    toast('Note enregistrée', 'ok');
+    await renderPaiements();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function supprimerNotePaiement(clientId) {
+  try {
+    const existantes = await sbSelect('compta_notes_paiement', `client_id=eq.${clientId}&mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}`);
+    for (const n of existantes) await sbDelete('compta_notes_paiement', n.id);
+    document.querySelector('.modal-bg')?.remove();
+    toast('Note supprimée', 'ok');
+    await renderPaiements();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function ouvrirValidationPaiementClient(clientId) {
