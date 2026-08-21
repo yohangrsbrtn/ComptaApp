@@ -1,6 +1,8 @@
 // Reçoit un client créé/modifié côté AppTrainingDatabase et le répercute dans
-// compta_clients — identité (prénom/nom/statut) seulement, jamais les champs
-// de facturation (tarif, mode de paiement, adresse...) qui restent propres à Compta.
+// compta_clients — identité (prénom/nom/statut) toujours, plus jour de paiement /
+// mode / banque quand la fiche facturation d'AppTrainingDatabase les fournit (ils
+// restent alors la source de vérité pour ces 3 champs précis ; tarif et adresse
+// restent propres à Compta et ne sont jamais écrasés par cette synchro).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SHARED_SECRET = Deno.env.get('SYNC_SHARED_SECRET')!;
@@ -21,10 +23,18 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), { status: 401 });
   }
   try {
-    const { client_id, prenom, nom, statut } = await req.json();
+    const { client_id, prenom, nom, statut, jour_paiement, mode_paiement, moy_paiement } = await req.json();
     if (!client_id || !nom) {
       return new Response(JSON.stringify({ ok: false, error: 'client_id et nom requis' }), { status: 400 });
     }
+
+    // N'écrase que les champs facturation explicitement transmis (fiche sauvegardée
+    // côté AppTrainingDatabase) — un appel de simple changement de statut n'inclut
+    // pas ces clés et ne doit surtout pas réinitialiser une valeur déjà saisie.
+    const champsFacturation: Record<string, unknown> = {};
+    if (jour_paiement !== undefined) champsFacturation.jour_paiement = jour_paiement;
+    if (mode_paiement !== undefined) champsFacturation.mode_paiement = mode_paiement;
+    if (moy_paiement !== undefined) champsFacturation.moy_paiement = moy_paiement;
 
     const { data: existant } = await supabase
       .from('compta_clients')
@@ -34,7 +44,7 @@ Deno.serve(async (req) => {
 
     if (existant) {
       await supabase.from('compta_clients').update({
-        prenom: prenom || '', nom, statut: mapStatut(statut),
+        prenom: prenom || '', nom, statut: mapStatut(statut), ...champsFacturation,
       }).eq('id', existant.id);
       return new Response(JSON.stringify({ ok: true, action: 'updated', id: existant.id }), {
         headers: { 'Content-Type': 'application/json' },
@@ -42,7 +52,7 @@ Deno.serve(async (req) => {
     }
 
     const { data: cree, error } = await supabase.from('compta_clients').insert({
-      apptraining_client_id: client_id, prenom: prenom || '', nom, statut: mapStatut(statut),
+      apptraining_client_id: client_id, prenom: prenom || '', nom, statut: mapStatut(statut), ...champsFacturation,
     }).select('id').single();
     if (error) throw error;
 
