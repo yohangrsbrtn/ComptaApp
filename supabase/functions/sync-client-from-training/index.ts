@@ -18,14 +18,20 @@ function mapStatut(statutTraining: string | undefined): 'actif' | 'ancien' {
   return statutTraining === 'ancien' ? 'ancien' : 'actif';
 }
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-sync-secret',
+};
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   if (req.headers.get('x-sync-secret') !== SHARED_SECRET) {
-    return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), { status: 401 });
+    return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), { status: 401, headers: corsHeaders });
   }
   try {
     const { client_id, prenom, nom, statut, jour_paiement, mode_paiement, moy_paiement } = await req.json();
     if (!client_id || !nom) {
-      return new Response(JSON.stringify({ ok: false, error: 'client_id et nom requis' }), { status: 400 });
+      return new Response(JSON.stringify({ ok: false, error: 'client_id et nom requis' }), { status: 400, headers: corsHeaders });
     }
 
     // N'écrase que les champs facturation explicitement transmis (fiche sauvegardée
@@ -47,7 +53,7 @@ Deno.serve(async (req) => {
         prenom: prenom || '', nom, statut: mapStatut(statut), ...champsFacturation,
       }).eq('id', existant.id);
       return new Response(JSON.stringify({ ok: true, action: 'updated', id: existant.id }), {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -57,12 +63,12 @@ Deno.serve(async (req) => {
     if (error) throw error;
 
     return new Response(JSON.stringify({ ok: true, action: 'created', id: cree.id }), {
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: String(e) }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });
