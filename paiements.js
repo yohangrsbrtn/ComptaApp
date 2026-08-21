@@ -38,6 +38,14 @@ async function _renderPaiementsMois() {
   const totalSeance = _paRows.reduce((s, p) => s + Number(p.mt_seance || 0), 0);
   const totalUrssaf = _paRows.filter(p => p.decla_urssaf).reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
 
+  const clientsPayes = new Set(_paRows.filter(p => p.client_id).map(p => p.client_id));
+  const estMoisEnCours = _paMois === moisActuel() && _paAnnee === new Date().getFullYear();
+  const jourAujourdhui = new Date().getDate();
+  const enAttente = S.clients
+    .filter(c => c.statut === 'actif' && !clientsPayes.has(c.id))
+    .map(c => ({ ...c, enRetard: estMoisEnCours && c.jour_paiement && jourAujourdhui > c.jour_paiement }))
+    .sort((a, b) => (a.jour_paiement || 99) - (b.jour_paiement || 99));
+
   document.getElementById('pa-body').innerHTML = `
     <div class="toolbar">
       <select onchange="_paMois=this.value;renderPaiements()" style="background:var(--card2);color:var(--text);border:1px solid var(--border);padding:9px 12px;border-radius:10px;">
@@ -50,6 +58,25 @@ async function _renderPaiementsMois() {
       <div class="card kpi"><div class="label">Total</div><div class="value">${fmtEUR(totalSuivi + totalSeance)}</div></div>
       <div class="card kpi"><div class="label">Déclaré URSSAF</div><div class="value">${fmtEUR(totalUrssaf)}</div></div>
     </div>
+
+    <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Clients en attente de paiement — ${_paMois} (${enAttente.length})</div>
+    <div class="table-wrap" style="margin-bottom:24px;">
+      <table>
+        <thead><tr><th>Client</th><th>Jour de paiement prévu</th><th>Moyen</th><th>Statut</th><th></th></tr></thead>
+        <tbody>
+          ${enAttente.length ? enAttente.map(c => `
+            <tr>
+              <td><b>${esc(c.prenom)} ${esc(c.nom)}</b></td>
+              <td>${c.jour_paiement ? `le ${c.jour_paiement}` : '—'}</td>
+              <td><span class="badge ${c.mode_paiement === 'ESP' ? 'badge-gold' : c.mode_paiement === 'Gocardless' ? 'badge-blue' : 'badge-green'}">${esc(c.mode_paiement) || '—'}</span> ${c.moy_paiement ? `<span class="page-sub">${esc(c.moy_paiement)}</span>` : ''}</td>
+              <td>${c.enRetard ? '<span class="badge badge-red">En retard</span>' : '<span class="badge badge-muted">En attente</span>'}</td>
+              <td><button class="btn btn-primary btn-sm" onclick="ouvrirValidationPaiementClient('${c.id}')">Marquer payé</button></td>
+            </tr>`).join('') : `<tr><td colspan="5"><div class="empty">Tous les clients actifs ont payé pour ${_paMois} 🎉</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Encaissements validés — ${_paMois}</div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Client</th><th>Date</th><th>Suivi</th><th>Séance</th><th>Banque</th><th>URSSAF</th><th></th></tr></thead>
@@ -67,6 +94,48 @@ async function _renderPaiementsMois() {
         </tbody>
       </table>
     </div>`;
+}
+
+function ouvrirValidationPaiementClient(clientId) {
+  const c = S.clients.find(x => x.id === clientId);
+  if (!c) return;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Marquer payé — ${esc(c.prenom)} ${esc(c.nom)}</h3>
+    <div class="field"><label>Date de paiement</label><input id="vp-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="row2">
+      <div class="field"><label>Montant suivi (€)</label><input id="vp-suivi" type="number" step="0.01" value="${c.tarif || 0}"></div>
+      <div class="field"><label>Montant séance (€)</label><input id="vp-seance" type="number" step="0.01" value="0"></div>
+    </div>
+    <div class="field"><label>Banque</label>
+      <select id="vp-banque">${['Qonto','Revolut','Crédit Agricole','Sumeria','Espèces','Paypal'].map(b => `<option ${c.moy_paiement===b?'selected':''}>${b}</option>`).join('')}</select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="validerPaiementClient('${clientId}')">Valider</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function validerPaiementClient(clientId) {
+  const c = S.clients.find(x => x.id === clientId);
+  if (!c) return;
+  try {
+    await sbInsert('compta_paiements', {
+      client_id: clientId, nom_client: `${c.prenom} ${c.nom}`, mois: _paMois, annee: _paAnnee,
+      date_paiement: document.getElementById('vp-date').value,
+      mt_suivi: parseFloat(document.getElementById('vp-suivi').value) || 0,
+      mt_seance: parseFloat(document.getElementById('vp-seance').value) || 0,
+      banque: document.getElementById('vp-banque').value,
+      decla_urssaf: false,
+    });
+    document.querySelector('.modal-bg')?.remove();
+    toast('Paiement validé', 'ok');
+    await renderPaiements();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 // ── GOCARDLESS — rapprochement ──────────────────────────────────────
