@@ -1,6 +1,11 @@
 const SUPABASE_URL = 'https://hvcerfxcfzoktzslqaqu.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh2Y2VyZnhjZnpva3R6c2xxYXF1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4MDY0NzIsImV4cCI6MjEwMjM4MjQ3Mn0.NUfiEqIny4tT1c_Np4gZ9U6Yyl_bDkwGZOkLkA0hiBU';
 
+// Pont vers AppTrainingDatabase (relance de paiement push) — même secret partagé
+// que la synchro client entrante, protège la fonction relance-paiement côté coaching.
+const RELANCE_PAIEMENT_URL = 'https://sfacjbwiczwkcjpwneyg.supabase.co/functions/v1/relance-paiement';
+const SYNC_SHARED_SECRET = 'H15Mzf-78UIOvdDywQYzxNOvy1mPstbJhac_r1-tbIE';
+
 function getAccessToken() { return localStorage.getItem('ca_token') || SUPABASE_ANON_KEY; }
 function isLoggedIn() { return !!localStorage.getItem('ca_token'); }
 

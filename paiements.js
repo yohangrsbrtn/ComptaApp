@@ -75,7 +75,10 @@ async function _renderPaiementsMois() {
               <td><span class="badge ${c.mode_paiement === 'ESP' ? 'badge-gold' : c.mode_paiement === 'Gocardless' ? 'badge-blue' : 'badge-green'}">${esc(c.mode_paiement) || '—'}</span> ${c.moy_paiement ? `<span class="page-sub">${esc(c.moy_paiement)}</span>` : ''}</td>
               <td>${c.note ? '<span class="badge badge-blue">Noté</span>' : c.enRetard ? '<span class="badge badge-red">En retard</span>' : '<span class="badge badge-muted">En attente</span>'}</td>
               <td style="max-width:220px;cursor:pointer;" onclick='ouvrirNotePaiement("${c.id}", ${JSON.stringify(c.note)})'>${c.note ? `<span class="page-sub">${esc(c.note)}</span>` : '<span class="btn btn-ghost btn-sm">+ Note</span>'}</td>
-              <td><button class="btn btn-primary btn-sm" onclick="ouvrirValidationPaiementClient('${c.id}')">Marquer payé</button></td>
+              <td style="display:flex;gap:6px;">
+                ${c.apptraining_client_id && c.mode_paiement !== 'Gocardless' ? `<button class="btn btn-ghost btn-sm" onclick="relancerPaiementClient('${c.apptraining_client_id}', '${esc(c.prenom)} ${esc(c.nom)}')">Relancer</button>` : ''}
+                <button class="btn btn-primary btn-sm" onclick="ouvrirValidationPaiementClient('${c.id}')">Marquer payé</button>
+              </td>
             </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Tous les clients actifs ont payé pour ${_paMois} 🎉</div></td></tr>`}
         </tbody>
       </table>
@@ -99,6 +102,20 @@ async function _renderPaiementsMois() {
         </tbody>
       </table>
     </div>`;
+}
+
+async function relancerPaiementClient(apptrainingClientId, nomClient) {
+  if (!confirm(`Envoyer un rappel de paiement push à ${nomClient} ?`)) return;
+  try {
+    const res = await fetch(RELANCE_PAIEMENT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-sync-secret': SYNC_SHARED_SECRET },
+      body: JSON.stringify({ client_id: apptrainingClientId }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.ok) throw new Error(data?.error || `Erreur (${res.status})`);
+    toast(data.sent > 0 ? 'Rappel envoyé' : 'Rappel enregistré (client sans notifications activées)', 'ok');
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function ouvrirNotePaiement(clientId, noteActuelle) {
