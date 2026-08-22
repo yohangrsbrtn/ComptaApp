@@ -103,3 +103,12 @@ function uid() { return crypto.randomUUID ? crypto.randomUUID() : Date.now() + '
 const MOIS = ['JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOUT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DECEMBRE'];
 const MOIS_NUM = { JANVIER: '01', 'FÉVRIER': '02', FEVRIER: '02', MARS: '03', AVRIL: '04', MAI: '05', JUIN: '06', JUILLET: '07', 'AOÛT': '08', AOUT: '08', SEPTEMBRE: '09', OCTOBRE: '10', NOVEMBRE: '11', 'DÉCEMBRE': '12', DECEMBRE: '12' };
 function moisActuel() { return MOIS[new Date().getMonth()]; }
+
+// Fin des séances en présentiel à partir d'août 2026 (demande du coach) — le champ
+// "Montant séance" n'est plus proposé à la saisie pour ce mois et les suivants ;
+// les montants déjà enregistrés avant août restent affichés et comptés normalement.
+function seancesActives(mois, annee) {
+  if (annee > 2026) return false;
+  if (annee < 2026) return true;
+  return MOIS.indexOf(mois) < MOIS.indexOf('AOUT');
+}

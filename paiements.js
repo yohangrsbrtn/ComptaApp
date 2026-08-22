@@ -193,7 +193,7 @@ function ouvrirValidationPaiementClient(clientId) {
     <div class="field"><label>Date de paiement</label><input id="vp-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
     <div class="row2">
       <div class="field"><label>Montant suivi (€)</label><input id="vp-suivi" type="number" step="0.01" value="${c.tarif || 0}"></div>
-      <div class="field"><label>Montant séance (€)</label><input id="vp-seance" type="number" step="0.01" value="0"></div>
+      ${seancesActives(_paMois, _paAnnee) ? `<div class="field"><label>Montant séance (€)</label><input id="vp-seance" type="number" step="0.01" value="0"></div>` : ''}
     </div>
     <div class="field"><label>Banque</label>
       <select id="vp-banque">${['Qonto','Revolut','Crédit Agricole','Sumeria','Espèces','Paypal'].map(b => `<option ${c.moy_paiement===b?'selected':''}>${b}</option>`).join('')}</select>
@@ -215,7 +215,7 @@ async function validerPaiementClient(clientId) {
       client_id: clientId, nom_client: `${c.prenom} ${c.nom}`, mois: _paMois, annee: _paAnnee,
       date_paiement: document.getElementById('vp-date').value,
       mt_suivi: parseFloat(document.getElementById('vp-suivi').value) || 0,
-      mt_seance: parseFloat(document.getElementById('vp-seance').value) || 0,
+      mt_seance: parseFloat(document.getElementById('vp-seance')?.value) || 0,
       banque: document.getElementById('vp-banque').value,
       decla_urssaf: false,
     });
@@ -383,7 +383,7 @@ function openPaiementModal() {
     <div class="field"><label>Date</label><input id="pf-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
     <div class="row2">
       <div class="field"><label>Montant suivi (€)</label><input id="pf-suivi" type="number" step="0.01" value="0"></div>
-      <div class="field"><label>Montant séance (€)</label><input id="pf-seance" type="number" step="0.01" value="0"></div>
+      ${seancesActives(_paMois, _paAnnee) ? `<div class="field"><label>Montant séance (€)</label><input id="pf-seance" type="number" step="0.01" value="0"></div>` : ''}
     </div>
     <div class="field"><label>Banque</label>
       <select id="pf-banque">${['Qonto','Revolut','Crédit Agricole','Sumeria','Espèces','Paypal'].map(b => `<option>${b}</option>`).join('')}</select>
@@ -419,7 +419,7 @@ async function savePaiement() {
     annee: _paAnnee,
     date_paiement: document.getElementById('pf-date').value || null,
     mt_suivi: parseFloat(document.getElementById('pf-suivi').value) || 0,
-    mt_seance: parseFloat(document.getElementById('pf-seance').value) || 0,
+    mt_seance: parseFloat(document.getElementById('pf-seance')?.value) || 0,
     banque: document.getElementById('pf-banque').value,
     decla_urssaf: document.getElementById('pf-urssaf').checked,
   };

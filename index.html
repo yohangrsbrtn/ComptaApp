@@ -254,14 +254,30 @@ async function doLogin() {
 async function renderDashboard() {
   await loadClients();
   const mois = moisActuel();
-  const [paiements, factures] = await Promise.all([
+  const moisCourantIdx = MOIS.indexOf(mois);
+  const [paiements, factures, paiementsAnnee, lignesAnnee] = await Promise.all([
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(mois)}&annee=eq.2026`),
     sbSelect('compta_factures', 'select=montant_total,mois&annee=eq.2026'),
+    sbSelect('compta_paiements', 'select=mois,mt_suivi,mt_seance&annee=eq.2026'),
+    sbSelect('compta_budget_lignes', 'select=mois,type,montant&annee=eq.2026'),
   ]);
   const totalMoisSuivi = paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0);
-  const totalMoisSeance = paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0);
   const actifs = S.clients.filter(c => c.statut !== 'ancien').length;
   const totalFactureAnnee = factures.reduce((s, f) => s + Number(f.montant_total || 0), 0);
+
+  const moisAffiches = MOIS.slice(0, moisCourantIdx + 1);
+  const revenuCoaching = moisAffiches.map(m => paiementsAnnee
+    .filter(p => p.mois === m).reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0));
+  const parType = t => moisAffiches.map(m => lignesAnnee
+    .filter(l => l.mois === m && l.type === t).reduce((s, l) => s + Number(l.montant || 0), 0));
+
+  const serieChart = [
+    { label: 'Revenus coaching', color: 'var(--accent2)', values: revenuCoaching },
+    { label: 'Dépenses fixes', color: 'var(--red)', values: parType('depense_fixe') },
+    { label: 'Dépenses variables', color: 'var(--gold)', values: parType('depense_variable') },
+    { label: 'Épargne', color: 'var(--blue)', values: parType('epargne') },
+    { label: 'Crédits', color: '#c084fc', values: parType('credit') },
+  ];
 
   document.getElementById('root').innerHTML = shell(`
     <div class="topbar">
@@ -270,8 +286,11 @@ async function renderDashboard() {
     <div class="grid cards4" style="margin-bottom:22px;">
       <div class="card kpi"><div class="label">Clients actifs</div><div class="value">${actifs}</div><div class="sub">${S.clients.length} au total</div></div>
       <div class="card kpi"><div class="label">Suivis encaissés (${mois.slice(0,4)})</div><div class="value pos">${fmtEUR(totalMoisSuivi)}</div></div>
-      <div class="card kpi"><div class="label">Séances encaissées</div><div class="value pos">${fmtEUR(totalMoisSeance)}</div></div>
       <div class="card kpi"><div class="label">Total facturé 2026</div><div class="value">${fmtEUR(totalFactureAnnee)}</div></div>
+    </div>
+    <div class="card" style="margin-bottom:22px;">
+      <div style="font-weight:700;margin-bottom:14px;">Évolution des dépenses et des revenus de coaching — 2026</div>
+      ${_svgEvolutionChart(moisAffiches, serieChart)}
     </div>
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
       <div class="card" style="cursor:pointer;" onclick="setPage('paiements')"><div style="font-weight:700;margin-bottom:6px;">€ Paiements du mois</div><div class="page-sub">Cocher les encaissements, générer les factures</div></div>
@@ -279,6 +298,42 @@ async function renderDashboard() {
       <div class="card" style="cursor:pointer;" onclick="setPage('budget')"><div style="font-weight:700;margin-bottom:6px;">▦ Budget mensuel</div><div class="page-sub">Revenus, dépenses, épargne, trésorerie</div></div>
     </div>
   `);
+}
+
+// Petit graphique multi-lignes en SVG à la main — pas de dépendance CDN pour un
+// simple dashboard, mêmes couleurs que les badges déjà utilisés dans l'app.
+function _svgEvolutionChart(moisLabels, series) {
+  const W = 900, H = 300, padL = 55, padR = 16, padT = 16, padB = 34;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const n = moisLabels.length;
+  const maxVal = Math.max(1, ...series.flatMap(s => s.values));
+  const x = i => padL + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+  const y = v => padT + innerH - (v / maxVal) * innerH;
+
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const val = maxVal * f;
+    const yy = y(val);
+    return `<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>
+            <text x="${padL-8}" y="${yy+4}" text-anchor="end" font-size="10.5" fill="var(--muted)">${fmtEUR(val).replace(',00','')}</text>`;
+  }).join('');
+
+  const xLabels = moisLabels.map((m, i) => `<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="10.5" fill="var(--muted)">${m.slice(0,3)}</text>`).join('');
+
+  const lines = series.map(s => {
+    const pts = s.values.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+    const dots = s.values.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${s.color}"/>`).join('');
+    return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.2"/>${dots}`;
+  }).join('');
+
+  const legend = series.map(s => `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-size:12px;color:var(--muted);"><span style="width:10px;height:10px;border-radius:50%;background:${s.color};display:inline-block;"></span>${s.label}</span>`).join('');
+
+  return `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">
+      ${grid}
+      ${lines}
+      ${xLabels}
+    </svg>
+    <div style="margin-top:10px;">${legend}</div>`;
 }
 
 async function render() {
