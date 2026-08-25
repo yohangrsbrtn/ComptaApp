@@ -95,16 +95,47 @@ function openClientModal(id) {
   const c = id ? S.clients.find(x => x.id === id) : null;
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal">
+  bg.innerHTML = `<div class="modal" style="max-width:640px;">
     <h3>${c ? 'Modifier' : 'Nouveau'} client</h3>
     ${_clientForm(c)}
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick="saveClient('${id || ''}')">Enregistrer</button>
     </div>
+    ${id ? `<div id="cl-historique" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border);"><div class="page-sub">Chargement de l'historique…</div></div>` : ''}
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+  if (id) _chargerHistoriquePaiements(id);
+}
+
+async function _chargerHistoriquePaiements(clientId) {
+  const el = document.getElementById('cl-historique');
+  if (!el) return;
+  try {
+    const paiements = await sbSelect('compta_paiements', `client_id=eq.${clientId}&order=annee.desc,date_paiement.desc`);
+    if (!document.getElementById('cl-historique')) return; // modal fermée entre-temps
+    const total = paiements.reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
+    el.innerHTML = `
+      <div style="font-weight:700;margin-bottom:10px;">Historique des paiements (${paiements.length}) — total ${fmtEUR(total)}</div>
+      ${paiements.length ? `
+      <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
+        <table>
+          <thead><tr><th>Mois</th><th>Date</th><th>Suivi</th><th>Séance</th><th>Banque</th></tr></thead>
+          <tbody>
+            ${paiements.map(p => `
+              <tr>
+                <td>${esc(p.mois)} ${p.annee}</td>
+                <td>${fmtDate(p.date_paiement) || '—'}</td>
+                <td>${p.mt_suivi ? fmtEUR(p.mt_suivi) : '—'}</td>
+                <td>${p.mt_seance ? fmtEUR(p.mt_seance) : '—'}</td>
+                <td>${esc(p.banque) || '—'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<div class="empty">Aucun paiement enregistré pour ce client</div>`}
+    `;
+  } catch (e) { el.innerHTML = `<div class="page-sub">Erreur de chargement de l'historique : ${esc(e.message)}</div>`; }
 }
 
 async function saveClient(id) {

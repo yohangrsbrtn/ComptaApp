@@ -7,10 +7,6 @@ let _paDerniereSyncGC = 0;
 
 async function renderPaiements() {
   await loadClients();
-  if (Date.now() - _paDerniereSyncGC > 2 * 60 * 1000) {
-    _paDerniereSyncGC = Date.now();
-    await _syncEtImporterAutoGoCardless();
-  }
 
   document.getElementById('root').innerHTML = shell(`
     <div class="topbar">
@@ -24,17 +20,26 @@ async function renderPaiements() {
       <div class="pill-tab ${_paTab==='mois'?'active':''}" onclick="_paTab='mois';renderPaiements()">Par mois</div>
       <div class="pill-tab ${_paTab==='gocardless'?'active':''}" onclick="_paTab='gocardless';renderPaiements()">GoCardless</div>
     </div>
-    <div id="pa-body"></div>
+    <div id="pa-body"><div class="empty">Chargement…</div></div>
   `);
 
-  const body = document.getElementById('pa-body');
-  if (_paTab === 'mois') { body.innerHTML = ''; await _renderPaiementsMois(); }
-  else { body.innerHTML = `<div class="empty">Chargement…</div>`; await _renderGoCardless(); }
+  // Synchro GoCardless lancée en arrière-plan, jamais bloquante pour l'affichage —
+  // si elle rapporte du nouveau, on rafraîchit silencieusement une fois terminée.
+  if (Date.now() - _paDerniereSyncGC > 2 * 60 * 1000) {
+    _paDerniereSyncGC = Date.now();
+    _syncEtImporterAutoGoCardless().then(nb => { if (nb && S.page === 'paiements') renderPaiements(); });
+  }
+
+  if (_paTab === 'mois') await _renderPaiementsMois();
+  else await _renderGoCardless();
 }
 
 async function _renderPaiementsMois() {
-  _paRows = await sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}&order=date_paiement.asc`);
-  const notes = await sbSelect('compta_notes_paiement', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}`);
+  const [rows, notes] = await Promise.all([
+    sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}&order=date_paiement.asc`),
+    sbSelect('compta_notes_paiement', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}`),
+  ]);
+  _paRows = rows;
   const notesParClient = {};
   notes.forEach(n => notesParClient[n.client_id] = n);
 
@@ -350,13 +355,14 @@ async function _autoImporterMatchesGC() {
 async function _syncEtImporterAutoGoCardless() {
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/gocardless-sync`, { method: 'POST', headers: supaHeaders() });
-    if (!res.ok) return;
+    if (!res.ok) return 0;
     const data = await res.json().catch(() => null);
-    if (!data?.ok) return;
+    if (!data?.ok) return 0;
     const importes = await _autoImporterMatchesGC();
     if (importes > 0) toast(`${importes} paiement(s) GoCardless versé(s) rattaché(s) automatiquement`, 'ok');
     else if (data.nouveaux > 0) toast(`${data.nouveaux} nouveau(x) paiement(s) versé(s) — à rattacher dans l'onglet GoCardless`, 'ok');
-  } catch { /* silencieux : la synchro manuelle affichera l'erreur si besoin */ }
+    return importes + (data.nouveaux || 0);
+  } catch { return 0; /* silencieux : la synchro manuelle affichera l'erreur si besoin */ }
 }
 
 async function importerToutGoCardless() {
