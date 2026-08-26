@@ -121,6 +121,31 @@ async function previsionGoCardless(): Promise<Record<string, { total: number; li
     }
     after = data.meta?.cursors?.after ?? null;
   } while (after);
+
+  // Prélèvements individuels programmés (paiement en plusieurs fois créé d'un coup,
+  // sans passer par un abonnement) : pas encore soumis à la banque du client, donc
+  // absents de tout ce qui précède, mais bien réels et à échéance connue. On exclut
+  // ceux rattachés à un abonnement (links.subscription) pour ne jamais les compter
+  // deux fois avec les upcoming_payments déjà agrégés ci-dessus.
+  for (const statut of ['pending_customer_approval', 'pending_submission', 'submitted', 'confirmed']) {
+    let afterP: string | null = null;
+    do {
+      const qs = new URLSearchParams({ limit: '100', status: statut });
+      if (afterP) qs.set('after', afterP);
+      const data = await gcFetch(`/payments?${qs.toString()}`);
+      for (const p of data.payments) {
+        if (p.links?.subscription) continue;
+        const customerId = await customerIdViaMandate(p.links?.mandate);
+        const nom = (await nomClient(customerId)) || 'Client GoCardless';
+        const moisKey = p.charge_date.slice(0, 7);
+        const entry = parMois[moisKey] = parMois[moisKey] || { total: 0, lignes: [] };
+        entry.total += p.amount / 100;
+        entry.lignes.push({ nom, montant: p.amount / 100 });
+      }
+      afterP = data.meta?.cursors?.after ?? null;
+    } while (afterP);
+  }
+
   return parMois;
 }
 
