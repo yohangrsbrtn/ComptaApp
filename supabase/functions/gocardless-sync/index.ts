@@ -96,8 +96,47 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Prévisionnel : chaque abonnement GoCardless actif porte ses 10 prochaines
+// échéances (upcoming_payments, déjà fournies par l'API — aucun calcul à refaire).
+// Regroupées par mois, avec le client résolu via son mandat, pour fusionner ensuite
+// côté app avec le prévisionnel des clients virement/espèces (paiements.js).
+async function previsionGoCardless(): Promise<Record<string, { total: number; lignes: { nom: string; montant: number }[] }>> {
+  const parMois: Record<string, { total: number; lignes: { nom: string; montant: number }[] }> = {};
+  let after: string | null = null;
+  do {
+    const qs = new URLSearchParams({ limit: '100', status: 'active' });
+    if (after) qs.set('after', after);
+    const data = await gcFetch(`/subscriptions?${qs.toString()}`);
+    for (const sub of data.subscriptions) {
+      if (!sub.upcoming_payments?.length) continue;
+      const customerId = await customerIdViaMandate(sub.links?.mandate);
+      const nom = (await nomClient(customerId)) || sub.name || 'Client GoCardless';
+      for (const up of sub.upcoming_payments) {
+        const moisKey = up.charge_date.slice(0, 7); // YYYY-MM
+        const entry = parMois[moisKey] = parMois[moisKey] || { total: 0, lignes: [] };
+        const montant = up.amount / 100;
+        entry.total += montant;
+        entry.lignes.push({ nom, montant });
+      }
+    }
+    after = data.meta?.cursors?.after ?? null;
+  } while (after);
+  return parMois;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  const url = new URL(req.url);
+  if (url.searchParams.get('forecast') === '1') {
+    try {
+      const prevision = await previsionGoCardless();
+      return new Response(JSON.stringify({ ok: true, prevision }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, error: String(e) }), { status: 500, headers: corsHeaders });
+    }
+  }
   try {
     const tousLesPayouts: any[] = [];
     let afterPayout: string | null = null;

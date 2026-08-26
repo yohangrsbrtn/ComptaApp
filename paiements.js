@@ -19,6 +19,7 @@ async function renderPaiements() {
     <div class="pill-tabs" style="margin-bottom:18px;">
       <div class="pill-tab ${_paTab==='mois'?'active':''}" onclick="_paTab='mois';renderPaiements()">Par mois</div>
       <div class="pill-tab ${_paTab==='gocardless'?'active':''}" onclick="_paTab='gocardless';renderPaiements()">GoCardless</div>
+      <div class="pill-tab ${_paTab==='previsionnel'?'active':''}" onclick="_paTab='previsionnel';renderPaiements()">Prévisionnel</div>
     </div>
     <div id="pa-body"><div class="empty">Chargement…</div></div>
   `);
@@ -31,7 +32,8 @@ async function renderPaiements() {
   }
 
   if (_paTab === 'mois') await _renderPaiementsMois();
-  else await _renderGoCardless();
+  else if (_paTab === 'gocardless') await _renderGoCardless();
+  else await _renderPrevisionnel();
 }
 
 async function _renderPaiementsMois() {
@@ -252,6 +254,56 @@ function _matchClientGC(nomGC) {
     return avecPrenom || null; // plusieurs homonymes de nom sans prénom qui tranche -> pas de match auto
   }
   return null;
+}
+
+// ── PRÉVISIONNEL — fusionne les échéances GoCardless à venir (upcoming_payments
+// des abonnements actifs, fournies telles quelles par l'API, aucun calcul à
+// refaire) avec une projection simple des clients virement/espèces (leur tarif
+// répété chaque mois tant qu'ils restent actifs) — pour savoir à l'avance combien
+// de revenu coaching attendre sur les prochains mois.
+async function _renderPrevisionnel() {
+  document.getElementById('pa-body').innerHTML = `<div class="empty">Calcul du prévisionnel…</div>`;
+  let previsionGC = {};
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/gocardless-sync?forecast=1`, { headers: supaHeaders() });
+    const data = await res.json();
+    if (data.ok) previsionGC = data.prevision;
+  } catch { /* si GoCardless est injoignable, on affiche quand même le prévisionnel virement seul */ }
+
+  const clientsManuels = S.clients.filter(c => c.statut === 'actif' && c.mode_paiement !== 'Gocardless' && Number(c.tarif) > 0);
+
+  const aujourdhui = new Date();
+  const moisListe = [];
+  for (let i = 1; i <= 6; i++) {
+    const d = new Date(aujourdhui.getFullYear(), aujourdhui.getMonth() + i, 1);
+    moisListe.push({ key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label: `${MOIS[d.getMonth()]} ${d.getFullYear()}` });
+  }
+
+  const lignes = moisListe.map(({ key, label }) => {
+    const gc = previsionGC[key] || { total: 0, lignes: [] };
+    const actifsCeMois = clientsManuels.filter(c => !c.date_fin || c.date_fin.slice(0, 7) >= key);
+    const manuelTotal = actifsCeMois.reduce((s, c) => s + Number(c.tarif || 0), 0);
+    return { label, gcTotal: gc.total, gcLignes: gc.lignes, manuelTotal, nbClients: actifsCeMois.length, total: gc.total + manuelTotal };
+  });
+
+  document.getElementById('pa-body').innerHTML = `
+    <div class="page-sub" style="margin:0 0 14px;">GoCardless : échéances réellement programmées (abonnements actifs). Virement/Espèces : projection sur la base du tarif des clients actifs, tant qu'ils le restent.</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mois</th><th>GoCardless prévu</th><th>Virement/ESP prévu</th><th>Total prévisionnel</th></tr></thead>
+        <tbody>
+          ${lignes.map(l => `
+            <tr>
+              <td><b>${l.label}</b></td>
+              <td>${fmtEUR(l.gcTotal)}${l.gcLignes.length ? `<div class="page-sub">${l.gcLignes.map(x=>esc(x.nom)).join(', ')}</div>` : ''}</td>
+              <td>${fmtEUR(l.manuelTotal)}<div class="page-sub">${l.nbClients} client(s)</div></td>
+              <td><b>${fmtEUR(l.total)}</b></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="page-sub" style="margin-top:14px;">Le prévisionnel virement/espèces suppose que ces clients restent actifs et payent leur tarif habituel — pense à vérifier une fin de coaching connue.</div>
+  `;
 }
 
 async function _renderGoCardless() {
