@@ -15,6 +15,7 @@ let _buTreso = null;
 let _buModeles = [];
 let _buSort = { col: 'date', dir: 'desc' };
 let _buAuto = { coachingDistance: 0, coachingSeance: 0, chimie: 0, addict: 0, achatsFournisseur: 0 };
+let _buSoldes = [];
 
 function _moisDateRange(mois) {
   const num = parseInt(MOIS_NUM[mois.toUpperCase()], 10);
@@ -27,7 +28,7 @@ function _moisDateRange(mois) {
 
 async function renderBudget() {
   const { debut, fin } = _moisDateRange(_buMois);
-  let [lignes, treso, paiements, ventes, addict, achats, achatsAddict, modeles] = await Promise.all([
+  let [lignes, treso, paiements, ventes, addict, achats, achatsAddict, modeles, soldes, paiementsAnnee, lignesAnnee] = await Promise.all([
     sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`),
     sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
@@ -36,8 +37,12 @@ async function renderBudget() {
     sbSelect('compta_commandes_fournisseur', `recue=eq.true&date_reception=gte.${debut}&date_reception=lt.${fin}`),
     sbSelect('compta_addict_achats', `statut=eq.recue&date_reception=gte.${debut}&date_reception=lt.${fin}`),
     sbSelect('compta_depenses_fixes_modeles', 'actif=eq.true&order=categorie.asc'),
+    sbSelect('compta_soldes_bancaires', 'select=*'),
+    sbSelect('compta_paiements', 'select=mois,annee,banque,mt_suivi,mt_seance&annee=eq.2026'),
+    sbSelect('compta_budget_lignes', 'select=mois,annee,banque,type,montant&annee=eq.2026'),
   ]);
   _buModeles = modeles;
+  _buSoldes = soldes;
 
   // Reconduction automatique : toute dépense fixe active sans ligne ce mois-ci est créée à la volée.
   const manquantes = modeles.filter(m => !lignes.some(l => l.modele_id === m.id));
@@ -51,6 +56,28 @@ async function renderBudget() {
 
   _buLignes = lignes;
   _buTreso = treso[0] || null;
+
+  // Soldes par banque : solde pointé à la main + tout ce qui a bougé (paiements clients,
+  // lignes de budget taguées à cette banque) sur les mois suivant le pointage, jusqu'au
+  // mois affiché — jamais stocké, recalculé à chaque affichage pour rester toujours juste.
+  const idxMois = (m, a) => a * 100 + MOIS.indexOf(m);
+  const idxAffiche = idxMois(_buMois, 2026);
+  const soldesCalcules = {};
+  BANQUES.forEach(b => {
+    const chk = _buSoldes.find(s => s.banque === b);
+    if (!chk) { soldesCalcules[b] = null; return; }
+    const idxChk = idxMois(chk.mois, chk.annee);
+    let solde = Number(chk.solde || 0);
+    if (idxAffiche > idxChk) {
+      solde += paiementsAnnee
+        .filter(p => p.banque === b && idxMois(p.mois, p.annee) > idxChk && idxMois(p.mois, p.annee) <= idxAffiche)
+        .reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
+      solde += lignesAnnee
+        .filter(l => l.banque === b && idxMois(l.mois, l.annee) > idxChk && idxMois(l.mois, l.annee) <= idxAffiche)
+        .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);
+    }
+    soldesCalcules[b] = { solde, dateMaj: chk.date_maj, aJour: idxAffiche === idxChk };
+  });
   _buAuto = {
     coachingDistance: paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0),
     coachingSeance: paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0),
@@ -111,6 +138,27 @@ async function renderBudget() {
         <div class="field"><label>Actuelle</label><input id="tr-actuelle" type="number" step="0.01" value="${_buTreso?.actuelle ?? 0}"></div>
       </div>
       <button class="btn btn-ghost btn-sm" onclick="saveTresorerie()">Enregistrer</button>
+    </div>
+
+    <div class="card" style="margin-bottom:18px;">
+      <div style="font-weight:700;margin-bottom:4px;">Soldes par banque</div>
+      <div class="page-sub" style="margin-bottom:12px;">Pointe le solde réel de temps en temps — le reste du temps il se recalcule tout seul à partir des paiements et lignes de budget de chaque banque.</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Banque</th><th>Solde estimé (${_buMois})</th><th>Dernier pointage</th><th></th></tr></thead>
+          <tbody>
+            ${BANQUES.map(b => {
+              const sc = soldesCalcules[b];
+              return `<tr>
+                <td><b>${esc(b)}</b></td>
+                <td>${sc ? fmtEUR(sc.solde) : '<span class="page-sub">Non renseigné</span>'}</td>
+                <td class="page-sub">${sc ? (sc.aJour ? `À jour (${fmtDate(sc.dateMaj)})` : fmtDate(sc.dateMaj)) : '—'}</td>
+                <td><button class="btn btn-ghost btn-sm" onclick='ouvrirSoldeBanque(${JSON.stringify(b)})'>Mettre à jour</button></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="pill-tabs" style="margin-bottom:14px;flex-wrap:wrap;">
@@ -317,6 +365,36 @@ async function deleteLigne(id) {
   if (!confirm('Supprimer cette ligne ?')) return;
   try { await sbDelete('compta_budget_lignes', id); await renderBudget(); toast('Supprimé', 'ok'); }
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+function ouvrirSoldeBanque(banque) {
+  const chk = _buSoldes.find(s => s.banque === banque);
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Pointer le solde — ${esc(banque)}</h3>
+    <div class="page-sub" style="margin-bottom:12px;">Entre le solde réel que tu vois sur ton compte à l'instant — tout ce qui se passera ensuite (paiements, dépenses taguées ${esc(banque)}) viendra s'y ajouter/retrancher automatiquement mois par mois.</div>
+    <div class="field"><label>Solde réel (€)</label><input id="sb-solde" type="number" step="0.01" value="${chk?.solde ?? 0}"></div>
+    <div class="page-sub" style="margin-bottom:10px;">Pointé pour le mois de <b>${_buMois}</b> — daté d'aujourd'hui.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick='sauvegarderSoldeBanque(${JSON.stringify(banque)})'>Enregistrer</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function sauvegarderSoldeBanque(banque) {
+  const solde = parseFloat(document.getElementById('sb-solde').value) || 0;
+  try {
+    await sbInsert('compta_soldes_bancaires?on_conflict=banque', {
+      banque, solde, mois: _buMois, annee: 2026, date_maj: new Date().toISOString().slice(0, 10),
+    }, { Prefer: 'return=representation,resolution=merge-duplicates' });
+    document.querySelector('.modal-bg')?.remove();
+    toast('Solde mis à jour', 'ok');
+    await renderBudget();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 async function saveTresorerie() {
