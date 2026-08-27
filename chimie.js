@@ -352,7 +352,13 @@ function _tplFournisseur() {
                 </td>
                 <td><b>${esc(c.produit_nom)}</b>${c.est_frais ? ' <span class="badge badge-gold">Frais</span>' : ''}</td>
                 <td>${esc(c.marque) || '—'}</td>
-                <td>${c.quantite}</td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterQteCmdFournisseur('${c.id}', -1)">−</button>
+                    <span style="min-width:20px;text-align:center;">${c.quantite}</span>
+                    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterQteCmdFournisseur('${c.id}', 1)">+</button>
+                  </div>
+                </td>
                 <td>${fmtEUR(c.prix_achat_unitaire)}</td>
                 <td>${fmtEUR(c.quantite * c.prix_achat_unitaire)}</td>
                 <td style="display:flex;gap:6px;">
@@ -568,6 +574,16 @@ async function receptionnerCommandes(ids) {
     }
     document.querySelector('.modal-bg')?.remove();
     toast(`${ids.length} commande(s) réceptionnée(s), stock mis à jour`, 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function ajusterQteCmdFournisseur(id, delta) {
+  const c = _chFournisseur.find(x => x.id === id);
+  if (!c) return;
+  const nouvelleQte = Math.max(1, Number(c.quantite || 1) + delta);
+  try {
+    await sbUpdate('compta_commandes_fournisseur', id, { quantite: nouvelleQte });
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
