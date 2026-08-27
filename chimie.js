@@ -335,7 +335,10 @@ function _tplFournisseur() {
             <input type="date" value="${dateGroupe}" onchange='_cfDateLot(${JSON.stringify(lignes.map(l=>l.id))}, this.value)' style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;">
             <button class="btn btn-ghost btn-sm" onclick='openCmdFournisseurModal(${JSON.stringify(dateGroupe)})'>+ Ligne</button>
           </div>
-          <button class="btn btn-primary btn-sm" onclick='ouvrirReceptionModal(null, ${JSON.stringify(lignes.map(l=>l.id))})'>Réceptionner le bloc</button>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick='copierCommandeFournisseur(${JSON.stringify(lignes.map(l=>l.id))})'>Copier</button>
+            <button class="btn btn-primary btn-sm" onclick='ouvrirReceptionModal(null, ${JSON.stringify(lignes.map(l=>l.id))})'>Réceptionner le bloc</button>
+          </div>
         </div>
         <table>
           <thead><tr><th>Statut</th><th>Produit</th><th>Marque</th><th>Qté</th><th>Prix achat unit.</th><th>Total</th><th></th></tr></thead>
@@ -567,6 +570,16 @@ async function receptionnerCommandes(ids) {
     toast(`${ids.length} commande(s) réceptionnée(s), stock mis à jour`, 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function copierCommandeFournisseur(ids) {
+  const lignes = _chFournisseur.filter(c => ids.includes(c.id) && !c.est_frais);
+  if (!lignes.length) { toast('Rien à copier dans ce bloc', 'err'); return; }
+  const texte = lignes.map(l => `${l.produit_nom}${l.marque ? ' (' + l.marque + ')' : ''} x${l.quantite}`).join('\n');
+  try {
+    await navigator.clipboard.writeText(texte);
+    toast('Commande copiée dans le presse-papier', 'ok');
+  } catch (e) { toast('Erreur copie : ' + e.message, 'err'); }
 }
 
 async function _cfDateLot(ids, date) {
