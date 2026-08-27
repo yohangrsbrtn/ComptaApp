@@ -6,6 +6,10 @@ const CATEGORIES = {
   credit: ['Crédit'],
 };
 const BANQUES = ['Crédit Agricole', 'Qonto', 'Revolut', 'Espèces', 'Sumeria', 'Paypal', 'Crypt'];
+// Suivi des soldes simplifié à la demande du coach : tout confondu (Qonto, Revolut,
+// Crédit Agricole...) dans un seul champ "Banque" — les virements entre ses propres
+// comptes ne sont plus suivis un par un, il fait le total lui-même à la calculette.
+const SOLDE_GROUPES = ['Banque', 'Espèces'];
 const TYPE_LABELS = { revenu: 'Revenus', depense_fixe: 'Dépenses fixes', depense_variable: 'Dépenses variables', epargne: 'Épargne', credit: 'Crédits' };
 
 let _buMois = moisActuel();
@@ -16,7 +20,6 @@ let _buModeles = [];
 let _buSort = { col: 'date', dir: 'desc' };
 let _buAuto = { coachingDistance: 0, coachingSeance: 0, chimie: 0, addict: 0, achatsFournisseur: 0 };
 let _buSoldes = [];
-let _buVirementsMois = [];
 
 function _moisDateRange(mois) {
   const num = parseInt(MOIS_NUM[mois.toUpperCase()], 10);
@@ -29,7 +32,7 @@ function _moisDateRange(mois) {
 
 async function renderBudget() {
   const { debut, fin } = _moisDateRange(_buMois);
-  let [lignes, treso, paiements, ventes, addict, achats, achatsAddict, modeles, soldes, paiementsAnnee, lignesAnnee, virementsAnnee, virementsMois] = await Promise.all([
+  let [lignes, treso, paiements, ventes, addict, achats, achatsAddict, modeles, soldes, paiementsAnnee, lignesAnnee] = await Promise.all([
     sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`),
     sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
@@ -41,12 +44,9 @@ async function renderBudget() {
     sbSelect('compta_soldes_bancaires', 'select=*'),
     sbSelect('compta_paiements', 'select=mois,annee,banque,mt_suivi,mt_seance&annee=eq.2026'),
     sbSelect('compta_budget_lignes', 'select=mois,annee,banque,type,montant&annee=eq.2026'),
-    sbSelect('compta_virements_internes', 'select=mois,annee,banque_source,banque_dest,montant&annee=eq.2026'),
-    sbSelect('compta_virements_internes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.desc`),
   ]);
   _buModeles = modeles;
   _buSoldes = soldes;
-  _buVirementsMois = virementsMois;
 
   // Reconduction automatique : toute dépense fixe active sans ligne ce mois-ci est créée à la volée.
   const manquantes = modeles.filter(m => !lignes.some(l => l.modele_id === m.id));
@@ -61,29 +61,28 @@ async function renderBudget() {
   _buLignes = lignes;
   _buTreso = treso[0] || null;
 
-  // Soldes par banque : solde pointé à la main + tout ce qui a bougé (paiements clients,
-  // lignes de budget taguées à cette banque) sur les mois suivant le pointage, jusqu'au
-  // mois affiché — jamais stocké, recalculé à chaque affichage pour rester toujours juste.
+  // Soldes simplifiés à deux groupes (Banque = tous les comptes confondus, Espèces) :
+  // solde pointé à la main + tout ce qui a bougé (paiements clients, lignes de budget)
+  // sur les mois suivant le pointage, jusqu'au mois affiché — jamais stocké, recalculé
+  // à chaque affichage pour rester toujours juste.
   const idxMois = (m, a) => a * 100 + MOIS.indexOf(m);
   const idxAffiche = idxMois(_buMois, 2026);
+  const appartientAuGroupe = (banque, groupe) => groupe === 'Espèces' ? banque === 'Espèces' : !!banque && banque !== 'Espèces';
   const soldesCalcules = {};
-  BANQUES.forEach(b => {
-    const chk = _buSoldes.find(s => s.banque === b);
-    if (!chk) { soldesCalcules[b] = null; return; }
+  SOLDE_GROUPES.forEach(g => {
+    const chk = _buSoldes.find(s => s.banque === g);
+    if (!chk) { soldesCalcules[g] = null; return; }
     const idxChk = idxMois(chk.mois, chk.annee);
     let solde = Number(chk.solde || 0);
     if (idxAffiche > idxChk) {
       solde += paiementsAnnee
-        .filter(p => p.banque === b && idxMois(p.mois, p.annee) > idxChk && idxMois(p.mois, p.annee) <= idxAffiche)
+        .filter(p => appartientAuGroupe(p.banque, g) && idxMois(p.mois, p.annee) > idxChk && idxMois(p.mois, p.annee) <= idxAffiche)
         .reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
       solde += lignesAnnee
-        .filter(l => l.banque === b && idxMois(l.mois, l.annee) > idxChk && idxMois(l.mois, l.annee) <= idxAffiche)
+        .filter(l => appartientAuGroupe(l.banque, g) && idxMois(l.mois, l.annee) > idxChk && idxMois(l.mois, l.annee) <= idxAffiche)
         .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);
-      solde += virementsAnnee
-        .filter(v => idxMois(v.mois, v.annee) > idxChk && idxMois(v.mois, v.annee) <= idxAffiche)
-        .reduce((s, v) => s + (v.banque_dest === b ? Number(v.montant || 0) : 0) - (v.banque_source === b ? Number(v.montant || 0) : 0), 0);
     }
-    soldesCalcules[b] = { solde, dateMaj: chk.date_maj, aJour: idxAffiche === idxChk };
+    soldesCalcules[g] = { solde, dateMaj: chk.date_maj, aJour: idxAffiche === idxChk };
   });
   _buAuto = {
     coachingDistance: paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0),
@@ -148,44 +147,24 @@ async function renderBudget() {
     </div>
 
     <div class="card" style="margin-bottom:18px;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
-        <div style="font-weight:700;">Soldes par banque</div>
-        <button class="btn btn-ghost btn-sm" onclick="ouvrirVirementInterne()">+ Virement entre banques</button>
-      </div>
-      <div class="page-sub" style="margin-bottom:12px;">Pointe le solde réel de temps en temps — le reste du temps il se recalcule tout seul à partir des paiements, lignes de budget et virements internes de chaque banque.</div>
+      <div style="font-weight:700;margin-bottom:4px;">Soldes</div>
+      <div class="page-sub" style="margin-bottom:12px;">Pointe le solde réel de temps en temps (tous comptes bancaires confondus, calculette en main) — le reste du temps il se recalcule tout seul à partir des paiements et lignes de budget.</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Banque</th><th>Solde estimé (${_buMois})</th><th>Dernier pointage</th><th></th></tr></thead>
+          <thead><tr><th>Groupe</th><th>Solde estimé (${_buMois})</th><th>Dernier pointage</th><th></th></tr></thead>
           <tbody>
-            ${BANQUES.map(b => {
-              const sc = soldesCalcules[b];
+            ${SOLDE_GROUPES.map(g => {
+              const sc = soldesCalcules[g];
               return `<tr>
-                <td><b>${esc(b)}</b></td>
+                <td><b>${esc(g)}</b></td>
                 <td>${sc ? fmtEUR(sc.solde) : '<span class="page-sub">Non renseigné</span>'}</td>
                 <td class="page-sub">${sc ? (sc.aJour ? `À jour (${fmtDate(sc.dateMaj)})` : fmtDate(sc.dateMaj)) : '—'}</td>
-                <td><button class="btn btn-ghost btn-sm" onclick='ouvrirSoldeBanque(${JSON.stringify(b)})'>Mettre à jour</button></td>
+                <td><button class="btn btn-ghost btn-sm" onclick='ouvrirSoldeBanque(${JSON.stringify(g)})'>Mettre à jour</button></td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
       </div>
-      ${_buVirementsMois.length ? `
-      <div class="page-sub" style="margin:14px 0 8px;font-weight:700;">Virements internes — ${_buMois}</div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>De</th><th>Vers</th><th>Montant</th><th>Détail</th><th></th></tr></thead>
-          <tbody>
-            ${_buVirementsMois.map(v => `
-              <tr>
-                <td>${esc(v.banque_source)}</td>
-                <td>${esc(v.banque_dest)}</td>
-                <td>${fmtEUR(v.montant)}</td>
-                <td class="page-sub">${esc(v.detail) || '—'}</td>
-                <td><button class="btn btn-ghost btn-sm" onclick="supprimerVirementInterne('${v.id}')">Suppr.</button></td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>` : ''}
     </div>
 
     <div class="pill-tabs" style="margin-bottom:14px;flex-wrap:wrap;">
@@ -394,56 +373,13 @@ async function deleteLigne(id) {
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-function ouvrirVirementInterne() {
-  const bg = document.createElement('div');
-  bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal">
-    <h3>Virement entre mes banques</h3>
-    <div class="page-sub" style="margin-bottom:12px;">Ne compte ni en revenu ni en dépense — déplace juste le solde calculé d'une banque vers l'autre.</div>
-    <div class="row2">
-      <div class="field"><label>De</label><select id="vi-source">${BANQUES.map(b => `<option>${b}</option>`).join('')}</select></div>
-      <div class="field"><label>Vers</label><select id="vi-dest">${BANQUES.map((b,i) => `<option ${i===1?'selected':''}>${b}</option>`).join('')}</select></div>
-    </div>
-    <div class="field"><label>Montant (€)</label><input id="vi-montant" type="number" step="0.01" value="0"></div>
-    <div class="field"><label>Détail (optionnel)</label><input id="vi-detail" placeholder="ex: renflouer Revolut"></div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
-      <button class="btn btn-primary" onclick="sauvegarderVirementInterne()">Enregistrer</button>
-    </div>
-  </div>`;
-  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
-  document.body.appendChild(bg);
-}
-
-async function sauvegarderVirementInterne() {
-  const banque_source = document.getElementById('vi-source').value;
-  const banque_dest = document.getElementById('vi-dest').value;
-  if (banque_source === banque_dest) { toast('Choisis deux banques différentes', 'err'); return; }
-  try {
-    await sbInsert('compta_virements_internes', {
-      mois: _buMois, annee: 2026, banque_source, banque_dest,
-      montant: parseFloat(document.getElementById('vi-montant').value) || 0,
-      detail: document.getElementById('vi-detail').value.trim() || null,
-      date: new Date().toISOString().slice(0, 10),
-    });
-    document.querySelector('.modal-bg')?.remove();
-    toast('Virement enregistré', 'ok');
-    await renderBudget();
-  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
-}
-
-async function supprimerVirementInterne(id) {
-  try { await sbDelete('compta_virements_internes', id); await renderBudget(); toast('Supprimé', 'ok'); }
-  catch (e) { toast('Erreur : ' + e.message, 'err'); }
-}
-
 function ouvrirSoldeBanque(banque) {
   const chk = _buSoldes.find(s => s.banque === banque);
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
     <h3>Pointer le solde — ${esc(banque)}</h3>
-    <div class="page-sub" style="margin-bottom:12px;">Entre le solde réel que tu vois sur ton compte à l'instant — tout ce qui se passera ensuite (paiements, dépenses taguées ${esc(banque)}) viendra s'y ajouter/retrancher automatiquement mois par mois.</div>
+    <div class="page-sub" style="margin-bottom:12px;">${banque === 'Espèces' ? 'Entre le montant en espèces que tu as sur toi/chez toi à l\'instant.' : 'Entre le total de tous tes comptes bancaires réunis (Qonto, Revolut, Crédit Agricole...), calculette en main.'} Tout ce qui se passera ensuite (paiements, dépenses taguées ${esc(banque === 'Espèces' ? 'Espèces' : 'à une banque')}) viendra s'y ajouter/retrancher automatiquement mois par mois.</div>
     <div class="field"><label>Solde réel (€)</label><input id="sb-solde" type="number" step="0.01" value="${chk?.solde ?? 0}"></div>
     <div class="page-sub" style="margin-bottom:10px;">Pointé pour le mois de <b>${_buMois}</b> — daté d'aujourd'hui.</div>
     <div class="modal-actions">
