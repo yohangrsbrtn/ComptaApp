@@ -393,6 +393,30 @@ async function render() {
 }
 
 render();
+
+// GitHub Pages impose 10 min de cache HTTP sur toutes les pages, sans possibilité de
+// le réduire (pas d'en-têtes personnalisables comme sur Netlify/Vercel) — plutôt que
+// de laisser l'app rester silencieusement périmée jusqu'à expiration du cache, on
+// détecte tout seul qu'un nouveau déploiement est en ligne (l'ETag de la page a changé)
+// et on propose un rechargement en un clic, sans devoir vider le cache à la main.
+let _appEtag = null;
+async function _checkAppUpdate() {
+  try {
+    const res = await fetch(location.pathname + '?_chk=' + Date.now(), { cache: 'no-store' });
+    const etag = res.headers.get('etag');
+    if (!etag) return;
+    if (_appEtag === null) { _appEtag = etag; return; }
+    if (etag !== _appEtag && !document.getElementById('maj-dispo-bandeau')) {
+      const b = document.createElement('div');
+      b.id = 'maj-dispo-bandeau';
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:300;background:var(--accent2);color:#06251b;padding:10px 16px;display:flex;align-items:center;justify-content:center;gap:14px;font-weight:700;font-size:13.5px;';
+      b.innerHTML = `<span>Nouvelle version disponible</span><button style="background:#06251b;color:var(--accent2);border:none;padding:6px 14px;border-radius:8px;font-weight:700;cursor:pointer;" onclick="location.reload()">Recharger</button>`;
+      document.body.appendChild(b);
+    }
+  } catch { /* pas grave, on retentera au prochain cycle */ }
+}
+setInterval(_checkAppUpdate, 90000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) _checkAppUpdate(); });
 </script>
 </body>
 </html>
