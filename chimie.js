@@ -213,11 +213,18 @@ function _tplStock() {
     const arrow = active ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
     return `<th style="cursor:pointer;user-select:none;" onclick="_chStockTri('${c}')">${label}${arrow}</th>`;
   };
+  const totalAchat = _chProduits.reduce((s, p) => s + Number(p.stock_reel || 0) * Number(p.prix_achat || 0), 0);
+  const totalVente = _chProduits.reduce((s, p) => s + Number(p.stock_reel || 0) * Number(p.prix_vente || 0), 0);
   return `
     <div class="toolbar">
       <button class="btn btn-ghost" onclick="lancerInventaire()">Faire l'inventaire</button>
       <div style="flex:1;"></div>
       <button class="btn btn-primary" onclick="openProduitModal()">+ Produit</button>
+    </div>
+    <div class="grid cards4" style="margin-bottom:18px;">
+      <div class="card kpi"><div class="label">Valeur stock à l'achat</div><div class="value">${fmtEUR(totalAchat)}</div></div>
+      <div class="card kpi"><div class="label">Valeur stock à la revente</div><div class="value">${fmtEUR(totalVente)}</div></div>
+      <div class="card kpi"><div class="label">Bénéfice estimé</div><div class="value pos">${fmtEUR(totalVente - totalAchat)}</div></div>
     </div>
     <div class="table-wrap">
       <table>
