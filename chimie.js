@@ -225,12 +225,36 @@ function _tplStock() {
               <td>${esc(p.type) || '—'}</td>
               <td>${p.prix_achat ? fmtEUR(p.prix_achat) : '—'}</td>
               <td>${p.prix_vente ? fmtEUR(p.prix_vente) : '—'}</td>
-              <td><span class="badge ${p.stock_reel < 0 ? 'badge-red' : p.stock_reel === 0 ? 'badge-muted' : 'badge-green'}">${p.stock_reel}</span></td>
+              <td>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', -1)">−</button>
+                  <input type="number" step="0.01" value="${p.stock_reel}" style="width:64px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;text-align:center;" onchange="modifierStockProduit('${p.id}', this.value)">
+                  <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', 1)">+</button>
+                </div>
+              </td>
               <td><button class="btn btn-ghost btn-sm" onclick="openProduitModal('${p.id}')">Éditer</button></td>
             </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucun produit</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
+}
+
+async function ajusterStockProduit(id, delta) {
+  const p = _chProduits.find(x => x.id === id);
+  if (!p) return;
+  await modifierStockProduit(id, Number(p.stock_reel || 0) + delta);
+}
+
+async function modifierStockProduit(id, valeur) {
+  const p = _chProduits.find(x => x.id === id);
+  if (!p) return;
+  const nouveauStock = parseFloat(valeur);
+  if (isNaN(nouveauStock)) return;
+  try {
+    await sbUpdate('compta_produits', id, { stock_reel: nouveauStock });
+    p.stock_reel = nouveauStock;
+    document.getElementById('ch-body').innerHTML = _tplStock();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function _chStockTri(col) {
