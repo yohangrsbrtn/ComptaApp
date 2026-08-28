@@ -412,12 +412,51 @@ function _tplFournisseur() {
   _chFournisseurRecues.forEach(c => { const k = c.date_reception || `nodate-${c.id}`; (parLotRecu[k] = parLotRecu[k] || []).push(c); });
   const lotsRecus = Object.values(parLotRecu).sort((a, b) => (b[0].date_reception || '').localeCompare(a[0].date_reception || ''));
 
+  // Besoins clients en attente : agrège les commandes clients pas encore validées en
+  // vente, par produit, et compare au stock réel — pour savoir quoi commander (et
+  // combien) sans repasser par l'onglet Commandes clients pendant qu'on prépare la
+  // commande fournisseur.
+  const besoins = {};
+  _chClients.forEach(c => {
+    const cle = c.produit_id || `nom-${c.produit_nom}`;
+    const b = besoins[cle] = besoins[cle] || { nom: c.produit_nom, marque: c.marque, produitId: c.produit_id || null, demande: 0 };
+    b.demande += Number(c.quantite || 0);
+  });
+  const besoinsListe = Object.values(besoins).map(b => {
+    const produit = b.produitId ? _chProduits.find(p => p.id === b.produitId) : _chProduits.find(p => p.nom === b.nom);
+    const stock = Number(produit?.stock_reel || 0);
+    return { ...b, stock, aCommander: Math.max(0, b.demande - stock) };
+  }).sort((a, b) => b.aCommander - a.aCommander || b.demande - a.demande);
+
   return `
     <div class="card kpi" style="margin-bottom:16px;max-width:280px;">
       <div class="label">Dépensé ce mois-ci (réceptionné)</div>
       <div class="value">${fmtEUR(_chDepenseMois)}</div>
       <div class="sub">Compté au moment de la réception, pas de la commande</div>
     </div>
+
+    ${besoinsListe.length ? `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="font-weight:700;margin-bottom:4px;">Besoins clients en attente</div>
+      <div class="page-sub" style="margin-bottom:12px;">Ce que tes commandes clients en cours demandent, comparé à ton stock réel — "À commander" tient déjà compte de ce que tu as en stock.</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Produit</th><th>Marque</th><th>Demandé par clients</th><th>En stock</th><th>À commander</th><th></th></tr></thead>
+          <tbody>
+            ${besoinsListe.map(b => `
+              <tr>
+                <td><b>${esc(b.nom)}</b></td>
+                <td>${esc(b.marque) || '—'}</td>
+                <td>${b.demande}</td>
+                <td>${b.stock}</td>
+                <td>${b.aCommander > 0 ? `<span class="badge badge-gold">${b.aCommander}</span>` : '<span class="badge badge-green">0 — couvert par le stock</span>'}</td>
+                <td>${b.aCommander > 0 ? `<button class="btn btn-ghost btn-sm" onclick='commanderBesoinClient(${JSON.stringify(b.produitId)}, ${JSON.stringify(b.nom)}, ${b.aCommander})'>Commander</button>` : ''}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+
     <div class="toolbar">
       <div></div>
       <div style="flex:1;"></div>
@@ -501,7 +540,11 @@ async function changerStatutFournisseur(id, statut) {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
 }
 
-function openCmdFournisseurModal(dateGroupe) {
+function commanderBesoinClient(produitId, nom, qte) {
+  openCmdFournisseurModal(null, { produitId, nom, qte });
+}
+
+function openCmdFournisseurModal(dateGroupe, prefill) {
   const today = new Date().toISOString().slice(0, 10);
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
@@ -511,13 +554,13 @@ function openCmdFournisseurModal(dateGroupe) {
     <div class="field"><label>Produit</label>
       <select id="cf-produit" onchange="_cfAutofill()">
         <option value="">— Nouveau produit —</option>
-        ${_chProduits.map(p => `<option value="${p.id}" data-marque="${esc(p.marque)}" data-achat="${p.prix_achat||''}">${esc(p.nom)}</option>`).join('')}
+        ${_chProduits.map(p => `<option value="${p.id}" data-marque="${esc(p.marque)}" data-achat="${p.prix_achat||''}" ${prefill && prefill.produitId===p.id?'selected':''}>${esc(p.nom)}</option>`).join('')}
       </select>
     </div>
-    <div class="field"><label>Nom du produit (si nouveau)</label><input id="cf-nom"></div>
+    <div class="field"><label>Nom du produit (si nouveau)</label><input id="cf-nom" value="${prefill && !prefill.produitId ? esc(prefill.nom) : ''}"></div>
     <div class="row3">
       <div class="field"><label>Marque</label><input id="cf-marque"></div>
-      <div class="field"><label>Quantité</label><input id="cf-qte" type="number" value="1"></div>
+      <div class="field"><label>Quantité</label><input id="cf-qte" type="number" value="${prefill?.qte ?? 1}"></div>
       <div class="field"><label>Prix achat unit.</label><input id="cf-prix" type="number" step="0.01" value="0"></div>
     </div>
     <div class="field"><label>Statut</label>
@@ -533,6 +576,7 @@ function openCmdFournisseurModal(dateGroupe) {
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) { bg.remove(); renderChimie(); } });
   document.body.appendChild(bg);
+  if (prefill?.produitId) _cfAutofill();
 }
 
 function openFraisPortModal() {
