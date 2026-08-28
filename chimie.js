@@ -1,4 +1,5 @@
 let _chTab = 'ventes';
+let _chInventaireMode = false;
 let _chProduits = [];
 let _chFournisseur = [];
 let _chFournisseurRecues = [];
@@ -38,7 +39,7 @@ async function renderChimie() {
   if (_chTab === 'ventes') body.innerHTML = _tplVentes();
   else if (_chTab === 'clients') body.innerHTML = _tplClients();
   else if (_chTab === 'fournisseur') body.innerHTML = _tplFournisseur();
-  else if (_chTab === 'stock') body.innerHTML = _tplStock();
+  else if (_chTab === 'stock') body.innerHTML = _chInventaireMode ? _tplInventaire() : _tplStock();
   else { body.innerHTML = `<div class="empty">Chargement…</div>`; await _renderBenefices(); }
 }
 
@@ -213,10 +214,14 @@ function _tplStock() {
     return `<th style="cursor:pointer;user-select:none;" onclick="_chStockTri('${c}')">${label}${arrow}</th>`;
   };
   return `
-    <div class="toolbar"><div></div><button class="btn btn-primary" onclick="openProduitModal()">+ Produit</button></div>
+    <div class="toolbar">
+      <button class="btn btn-ghost" onclick="lancerInventaire()">Faire l'inventaire</button>
+      <div style="flex:1;"></div>
+      <button class="btn btn-primary" onclick="openProduitModal()">+ Produit</button>
+    </div>
     <div class="table-wrap">
       <table>
-        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th></th></tr></thead>
+        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th>Dernier inventaire</th><th></th></tr></thead>
         <tbody>
           ${sorted.length ? sorted.map(p => `
             <tr>
@@ -232,11 +237,77 @@ function _tplStock() {
                   <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', 1)">+</button>
                 </div>
               </td>
+              <td class="page-sub">${p.dernier_inventaire ? fmtDate(p.dernier_inventaire) : '<span style="color:var(--red);">Jamais</span>'}</td>
               <td><button class="btn btn-ghost btn-sm" onclick="openProduitModal('${p.id}')">Éditer</button></td>
-            </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucun produit</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="8"><div class="empty">Aucun produit</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
+}
+
+// ── INVENTAIRE — passe en revue TOUS les produits un par un (pas seulement ceux
+// qu'on pense à vérifier) pour éviter le vrai piège : un produit qu'on n'a plus
+// physiquement ne donne aucune raison d'aller le corriger dans l'app spontanément,
+// donc son stock reste faux indéfiniment tant qu'il n'est pas passé en revue ici.
+function lancerInventaire() {
+  _chInventaireMode = true;
+  renderChimie();
+}
+
+function annulerInventaire() {
+  _chInventaireMode = false;
+  renderChimie();
+}
+
+function _tplInventaire() {
+  const tries = [..._chProduits].sort((a, b) => {
+    const m = (a.marque || '').localeCompare(b.marque || '');
+    return m !== 0 ? m : (a.nom || '').localeCompare(b.nom || '');
+  });
+  return `
+    <div class="page-sub" style="margin-bottom:14px;">Passe en revue chaque produit, coche-le au fur et à mesure — même ceux que tu n'as plus, mets-les à 0 et coche-les quand même. C'est le seul moyen de repérer les stocks tombés à zéro sans que tu aies pensé à les corriger.</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th style="width:36px;"></th><th>Produit</th><th>Marque</th><th>Stock actuel (app)</th><th>Stock réel compté</th></tr></thead>
+        <tbody>
+          ${tries.map(p => `
+            <tr id="inv-row-${p.id}">
+              <td><input id="inv-chk-${p.id}" type="checkbox" style="width:18px;height:18px;"></td>
+              <td><b>${esc(p.nom)}</b></td>
+              <td>${esc(p.marque) || '—'}</td>
+              <td class="page-sub">${p.stock_reel}</td>
+              <td>
+                <input id="inv-val-${p.id}" type="number" step="0.01" value="${p.stock_reel}" style="width:80px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;" oninput="document.getElementById('inv-chk-${p.id}').checked = true">
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn btn-ghost" onclick="annulerInventaire()">Annuler</button>
+      <button class="btn btn-primary" onclick="validerInventaire()">Valider l'inventaire</button>
+    </div>`;
+}
+
+async function validerInventaire() {
+  const produitsVerifies = _chProduits.filter(p => document.getElementById(`inv-chk-${p.id}`)?.checked);
+  if (!produitsVerifies.length) { toast('Coche au moins un produit vérifié', 'err'); return; }
+  const nonVerifies = _chProduits.length - produitsVerifies.length;
+  if (nonVerifies > 0 && !confirm(`${nonVerifies} produit(s) pas cochés ne seront pas mis à jour ni marqués vérifiés. Continuer ?`)) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const changements = [];
+  try {
+    for (const p of produitsVerifies) {
+      const nouvelleValeur = parseFloat(document.getElementById(`inv-val-${p.id}`).value);
+      if (isNaN(nouvelleValeur)) continue;
+      if (nouvelleValeur !== Number(p.stock_reel || 0)) changements.push({ nom: p.nom, avant: p.stock_reel, apres: nouvelleValeur });
+      await sbUpdate('compta_produits', p.id, { stock_reel: nouvelleValeur, dernier_inventaire: today });
+    }
+    _chInventaireMode = false;
+    toast(changements.length ? `Inventaire enregistré — ${changements.length} stock(s) corrigé(s)` : 'Inventaire enregistré, aucun écart', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 async function ajusterStockProduit(id, delta) {
