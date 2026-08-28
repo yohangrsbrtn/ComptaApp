@@ -30,6 +30,48 @@ function _moisDateRange(mois) {
   return { debut, fin };
 }
 
+function _agregerParCategorie(types) {
+  const parCat = {};
+  _buLignes.filter(l => types.includes(l.type)).forEach(l => {
+    const cle = l.categorie || 'Autre';
+    parCat[cle] = (parCat[cle] || 0) + Number(l.montant || 0);
+  });
+  return Object.entries(parCat).map(([label, montant]) => ({ label, montant }));
+}
+
+// Garde les `max` plus grosses catégories telles quelles, fusionne le reste dans
+// "Autres" — sinon un graphique à 15+ petites dépenses devient illisible.
+function _fusionnerPetites(items, max) {
+  if (items.length <= max) return items;
+  const tries = [...items].sort((a, b) => b.montant - a.montant);
+  const gardees = tries.slice(0, max);
+  const autres = tries.slice(max).reduce((s, i) => s + i.montant, 0);
+  return autres > 0 ? [...gardees, { label: 'Autres', montant: autres }] : gardees;
+}
+
+const _COULEURS_GRAPHIQUE = ['#34d399', '#60a5fa', '#f5c451', '#f87171', '#c084fc', '#fb923c', '#22d3ee', '#a3e635', '#f472b6', '#8b96b8'];
+
+// Barres horizontales en SVG à la main, même esprit que le graphique du dashboard —
+// pas de dépendance externe pour un simple récap mensuel.
+function _svgBarresCategories(items) {
+  if (!items.length) return `<div class="empty">Rien ce mois-ci</div>`;
+  const total = items.reduce((s, i) => s + i.montant, 0);
+  const max = Math.max(...items.map(i => i.montant));
+  const W = 480, barH = 26, gap = 12, padL = 4;
+  const H = items.length * (barH + gap);
+  const rows = items.map((it, i) => {
+    const y = i * (barH + gap);
+    const w = max > 0 ? (it.montant / max) * (W - 220) : 0;
+    const couleur = _COULEURS_GRAPHIQUE[i % _COULEURS_GRAPHIQUE.length];
+    const pct = total > 0 ? Math.round((it.montant / total) * 100) : 0;
+    return `
+      <text x="${padL}" y="${y + barH/2 + 4}" font-size="12.5" fill="var(--text)">${esc(it.label)}</text>
+      <rect x="140" y="${y+2}" width="${Math.max(w,2)}" height="${barH-4}" rx="5" fill="${couleur}"/>
+      <text x="${140 + w + 8}" y="${y + barH/2 + 4}" font-size="12" fill="var(--muted)">${fmtEUR(it.montant)} · ${pct}%</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;font-family:inherit;">${rows}</svg>`;
+}
+
 const _idxMois = (m, a) => a * 100 + MOIS.indexOf(m);
 const _appartientAuGroupeSolde = (banque, groupe) => groupe === 'Espèces' ? banque === 'Espèces' : !!banque && banque !== 'Espèces';
 
@@ -124,6 +166,27 @@ async function renderBudget() {
   const actuelleReelle = aUnPointage ? (soldesCalcules['Banque']?.solde || 0) + (soldesCalcules['Espèces']?.solde || 0) : null;
   const ecartTresorerie = actuelleReelle !== null ? actuelleReelle - actuelleTheorique : null;
 
+  // Répartition par catégorie (mois affiché) : revenus d'un côté, dépenses fixes+variables
+  // fusionnées de l'autre (les catégories les plus petites sont regroupées dans "Autres"
+  // pour garder un graphique lisible plutôt que 16 barres minuscules), épargne+crédit à part.
+  const revenuItems = [
+    { label: 'Coaching', montant: _buAuto.coachingDistance + _buAuto.coachingSeance },
+    { label: 'Chimie (bénéfice)', montant: _buAuto.chimie },
+    { label: 'Addict (bénéfice)', montant: _buAuto.addict },
+    ..._agregerParCategorie(['revenu']),
+  ].filter(i => i.montant > 0).sort((a, b) => b.montant - a.montant);
+
+  const depenseItemsBruts = [
+    ..._agregerParCategorie(['depense_fixe', 'depense_variable']),
+    ...(_buAuto.achatsFournisseur > 0 ? [{ label: 'Achats stock (Chimie/Addict)', montant: _buAuto.achatsFournisseur }] : []),
+  ].filter(i => i.montant > 0).sort((a, b) => b.montant - a.montant);
+  const depenseItems = _fusionnerPetites(depenseItemsBruts, 6);
+
+  const epargneCreditItems = [
+    { label: 'Épargne', montant: totEparg },
+    { label: 'Crédits', montant: totCredit },
+  ].filter(i => i.montant > 0).sort((a, b) => b.montant - a.montant);
+
   const rowsType = _buLignes.filter(l => l.type === _buType);
   const { col: sortCol, dir: sortDir } = _buSort;
   rowsType.sort((a, b) => {
@@ -202,6 +265,23 @@ async function renderBudget() {
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:18px;">
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:12px;">Revenus par catégorie</div>
+        ${_svgBarresCategories(revenuItems)}
+      </div>
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:4px;">Dépenses par catégorie</div>
+        <div class="page-sub" style="margin-bottom:10px;">${depenseItemsBruts.length > 6 ? 'Petites catégories regroupées dans "Autres" pour rester lisible.' : ''}</div>
+        ${_svgBarresCategories(depenseItems)}
+      </div>
+      ${epargneCreditItems.length ? `
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:12px;">Épargne &amp; crédits</div>
+        ${_svgBarresCategories(epargneCreditItems)}
+      </div>` : ''}
     </div>
 
     <div class="pill-tabs" style="margin-bottom:14px;flex-wrap:wrap;">
