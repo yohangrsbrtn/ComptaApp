@@ -43,6 +43,8 @@
   .sidebar-foot { margin-top: auto; padding: 10px 12px; }
   .btn-logout { width: 100%; padding: 10px; border-radius: 10px; background: transparent; border: 1px solid var(--border); color: var(--muted); cursor: pointer; }
   .btn-logout:hover { color: var(--red); border-color: var(--red); }
+  .nav-more-item { display: none; }
+  .nav-plus-sheet, .nav-plus-backdrop { display: none; }
 
   .main { flex: 1; min-width: 0; padding: 28px 34px 60px; }
   .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
@@ -118,18 +120,31 @@
     html, body { overscroll-behavior-x: none; }
     .sidebar {
       position: fixed; left: 0; bottom: 0; top: auto; width: 100%; height: auto;
-      display: grid; grid-template-columns: repeat(7, 1fr); gap: 0;
-      padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 0;
+      padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
       border-right: none; border-top: 1px solid var(--border); z-index: 50;
       touch-action: pan-y;
     }
     .brand, .sidebar-foot { display: none; }
-    .nav-item { flex-direction: column; font-size: 9px; gap: 3px; padding: 7px 2px; white-space: nowrap; text-align: center; border-radius: 8px; }
-    .nav-item .ic { font-size: 15px; }
+    .nav-item[data-mobile-hide="1"] { display: none; }
+    .nav-more-item { display: flex; }
+    .nav-item { flex-direction: column; font-size: 10.5px; gap: 4px; padding: 8px 2px; white-space: nowrap; text-align: center; border-radius: 10px; }
+    .nav-item .ic { font-size: 18px; }
     .nav-label-full { display: none; }
     .nav-label-short { display: block; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
     .main { padding: 18px 16px 90px; }
     .row2, .row3 { grid-template-columns: 1fr; }
+    .nav-plus-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 55; }
+    .nav-plus-sheet {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 56;
+      background: var(--card); border-top: 1px solid var(--border);
+      border-radius: 18px 18px 0 0; padding: 10px 10px calc(14px + env(safe-area-inset-bottom, 0px));
+      flex-direction: column; gap: 2px;
+      box-shadow: 0 -10px 30px rgba(0,0,0,.4);
+    }
+    .nav-plus-item { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 12px; color: var(--text); font-weight: 600; font-size: 15px; }
+    .nav-plus-item.active { color: var(--accent2); background: rgba(16,185,129,.1); }
+    .nav-plus-item .ic { width: 20px; text-align: center; }
   }
 </style>
 </head>
@@ -172,19 +187,39 @@ async function loadClients(force) {
   return S.clients;
 }
 
+// Sur mobile, 7 onglets en bas devenaient minuscules et illisibles (9px, 7 colonnes
+// serrées) — on n'en garde que 4 directement visibles, le reste passe dans "Plus"
+// (feuille qui s'ouvre par-dessus). Le desktop n'est pas concerné : la sidebar
+// classique affiche toujours les 7 pages normalement, rien ne change pour elle.
+const NAV_MOBILE_PRIMAIRES = ['dashboard', 'paiements', 'budget', 'clients'];
+
 function shell(innerHtml) {
+  const navSecondaires = NAV.filter(n => !NAV_MOBILE_PRIMAIRES.includes(n.id));
   return `
   <div class="app">
     <div class="sidebar">
       <div class="brand"><span class="dot"></span> Compta</div>
-      ${NAV.map(n => `<div class="nav-item ${S.page === n.id ? 'active' : ''}" onclick="setPage('${n.id}')"><span class="ic">${n.ic}</span> <span class="nav-label-full">${n.label}</span><span class="nav-label-short">${n.short}</span></div>`).join('')}
+      ${NAV.map(n => `<div class="nav-item ${S.page === n.id ? 'active' : ''}" data-mobile-hide="${NAV_MOBILE_PRIMAIRES.includes(n.id) ? '0' : '1'}" onclick="setPage('${n.id}')"><span class="ic">${n.ic}</span> <span class="nav-label-full">${n.label}</span><span class="nav-label-short">${n.short}</span></div>`).join('')}
+      <div class="nav-item nav-more-item ${navSecondaires.some(n => n.id === S.page) ? 'active' : ''}" onclick="toggleNavPlus()"><span class="ic">⋯</span> <span class="nav-label-short">Plus</span></div>
       <div class="sidebar-foot" style="display:flex;gap:8px;align-items:center;">
         <button class="btn-logout" onclick="doLogout()" style="flex:1;">Déconnexion</button>
         <button class="btn-logout" onclick="openChangerMdpModal()" title="Changer le mot de passe" style="width:38px;flex:none;padding:10px 0;">⚙</button>
       </div>
     </div>
+    <div id="nav-plus-sheet" class="nav-plus-sheet" style="display:none;">
+      ${navSecondaires.map(n => `<div class="nav-plus-item ${S.page === n.id ? 'active' : ''}" onclick="setPage('${n.id}');toggleNavPlus(false)"><span class="ic">${n.ic}</span> ${n.label}</div>`).join('')}
+    </div>
+    <div id="nav-plus-backdrop" class="nav-plus-backdrop" style="display:none;" onclick="toggleNavPlus(false)"></div>
     <div class="main">${innerHtml}</div>
   </div>`;
+}
+
+function toggleNavPlus(force) {
+  const sheet = document.getElementById('nav-plus-sheet');
+  const backdrop = document.getElementById('nav-plus-backdrop');
+  const show = force !== undefined ? force : sheet.style.display === 'none';
+  sheet.style.display = show ? 'flex' : 'none';
+  backdrop.style.display = show ? 'block' : 'none';
 }
 
 function doLogout() { logout(); render(); }
@@ -231,13 +266,15 @@ function renderLogin() {
   <div class="login-wrap">
     <div class="login-card">
       <div class="brand"><span class="dot"></span> Compta</div>
-      <div class="field"><label>Email</label><input id="li-email" type="email" value="yohangrsbrtn@gmail.com"></div>
-      <div class="field"><label>Mot de passe</label><input id="li-pass" type="password" placeholder="••••••••"></div>
-      <div id="li-err" style="color:var(--red);font-size:13px;margin-bottom:10px;"></div>
-      <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="doLogin()">Se connecter</button>
+      <form id="li-form">
+        <div class="field"><label>Email</label><input id="li-email" name="email" type="email" autocomplete="username" value="yohangrsbrtn@gmail.com"></div>
+        <div class="field"><label>Mot de passe</label><input id="li-pass" name="password" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+        <div id="li-err" style="color:var(--red);font-size:13px;margin-bottom:10px;"></div>
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;">Se connecter</button>
+      </form>
     </div>
   </div>`;
-  document.getElementById('li-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('li-form').addEventListener('submit', e => { e.preventDefault(); doLogin(); });
 }
 
 async function doLogin() {
@@ -247,6 +284,9 @@ async function doLogin() {
   err.textContent = '';
   try {
     await login(email, pass);
+    // Sans ce submit "réussi" via un vrai <form>, les navigateurs (surtout mobile)
+    // ne proposaient jamais d'enregistrer le mot de passe — d'où la reconnexion
+    // manuelle à chaque fois en plus de l'expiration de session déjà corrigée.
     await render();
   } catch (e) { err.textContent = e.message; }
 }

@@ -37,16 +37,57 @@ function logout() {
   localStorage.removeItem('ca_refresh');
 }
 
+// Le token d'accès expire au bout d'1h — sans ce rafraîchissement silencieux via le
+// refresh_token, chaque session expirée forçait une reconnexion manuelle complète
+// (mot de passe retapé à la main), ce qui arrivait très souvent sur mobile où l'app
+// reste ouverte en arrière-plan plus d'une heure entre deux utilisations.
+let _refreshEnCours = null;
+async function refreshAccessToken() {
+  const refresh = localStorage.getItem('ca_refresh');
+  if (!refresh) return false;
+  if (_refreshEnCours) return _refreshEnCours;
+  _refreshEnCours = (async () => {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      localStorage.setItem('ca_token', data.access_token);
+      localStorage.setItem('ca_refresh', data.refresh_token);
+      return true;
+    } catch { return false; }
+  })();
+  const ok = await _refreshEnCours;
+  _refreshEnCours = null;
+  return ok;
+}
+
+// Tout appel authentifié passe par ici : sur un 401 (token expiré), on tente un
+// rafraîchissement silencieux et on rejoue la requête une fois avant d'abandonner
+// et de forcer la reconnexion — c'est ce filet qui manquait partout ailleurs.
+async function authFetch(url, opts) {
+  let res = await fetch(url, opts);
+  if (res.status === 401 && await refreshAccessToken()) {
+    const opts2 = Object.assign({}, opts, { headers: Object.assign({}, opts.headers, { Authorization: 'Bearer ' + getAccessToken() }) });
+    res = await fetch(url, opts2);
+  }
+  if (res.status === 401) { logout(); location.reload(); }
+  return res;
+}
+
 // ── CRUD REST générique ──────────────────────────────────────────────
 async function sbSelect(table, query = '') {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: supaHeaders() });
-  if (res.status === 401) { logout(); location.reload(); return []; }
+  const res = await authFetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: supaHeaders() });
+  if (res.status === 401) return [];
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 async function sbInsert(table, body, extraHeaders) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+  const res = await authFetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
     headers: supaHeaders(Object.assign({ Prefer: 'return=representation' }, extraHeaders || {})),
     body: JSON.stringify(body)
@@ -56,7 +97,7 @@ async function sbInsert(table, body, extraHeaders) {
 }
 
 async function sbUpdate(table, id, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
+  const res = await authFetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
     method: 'PATCH',
     headers: supaHeaders({ Prefer: 'return=representation' }),
     body: JSON.stringify(body)
@@ -66,7 +107,7 @@ async function sbUpdate(table, id, body) {
 }
 
 async function sbDelete(table, id) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
+  const res = await authFetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
     method: 'DELETE',
     headers: supaHeaders()
   });
@@ -74,7 +115,7 @@ async function sbDelete(table, id) {
 }
 
 async function sbUpload(bucket, filePath, blob) {
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${filePath}`, {
+  const res = await authFetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${filePath}`, {
     method: 'POST',
     headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + getAccessToken(), 'Content-Type': 'application/pdf', 'x-upsert': 'true' },
     body: blob
@@ -84,7 +125,7 @@ async function sbUpload(bucket, filePath, blob) {
 }
 
 async function sbSignedUrl(bucket, filePath) {
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${filePath}`, {
+  const res = await authFetch(`${SUPABASE_URL}/storage/v1/object/sign/${bucket}/${filePath}`, {
     method: 'POST',
     headers: supaHeaders(),
     body: JSON.stringify({ expiresIn: 3600 })
