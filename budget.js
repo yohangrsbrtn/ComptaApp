@@ -30,9 +30,41 @@ function _moisDateRange(mois) {
   return { debut, fin };
 }
 
+const _idxMois = (m, a) => a * 100 + MOIS.indexOf(m);
+const _appartientAuGroupeSolde = (banque, groupe) => groupe === 'Espèces' ? banque === 'Espèces' : !!banque && banque !== 'Espèces';
+
+// Solde réel par groupe (Banque / Espèces) à un mois donné : dernier pointage + tout
+// ce qui a bougé depuis (paiements clients, lignes de budget) — recalculé à la demande,
+// jamais stocké, pour toujours refléter les derniers paiements/dépenses enregistrés.
+async function _calculerSoldesGroupes(moisCible, anneeCible) {
+  const [soldes, paiementsAnnee, lignesAnnee] = await Promise.all([
+    sbSelect('compta_soldes_bancaires', 'select=*'),
+    sbSelect('compta_paiements', `select=mois,annee,banque,mt_suivi,mt_seance&annee=eq.${anneeCible}`),
+    sbSelect('compta_budget_lignes', `select=mois,annee,banque,type,montant&annee=eq.${anneeCible}`),
+  ]);
+  const idxAffiche = _idxMois(moisCible, anneeCible);
+  const resultat = {};
+  SOLDE_GROUPES.forEach(g => {
+    const chk = soldes.find(s => s.banque === g);
+    if (!chk) { resultat[g] = null; return; }
+    const idxChk = _idxMois(chk.mois, chk.annee);
+    let solde = Number(chk.solde || 0);
+    if (idxAffiche > idxChk) {
+      solde += paiementsAnnee
+        .filter(p => _appartientAuGroupeSolde(p.banque, g) && _idxMois(p.mois, p.annee) > idxChk && _idxMois(p.mois, p.annee) <= idxAffiche)
+        .reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
+      solde += lignesAnnee
+        .filter(l => _appartientAuGroupeSolde(l.banque, g) && _idxMois(l.mois, l.annee) > idxChk && _idxMois(l.mois, l.annee) <= idxAffiche)
+        .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);
+    }
+    resultat[g] = { solde, dateMaj: chk.date_maj, aJour: idxAffiche === idxChk };
+  });
+  return resultat;
+}
+
 async function renderBudget() {
   const { debut, fin } = _moisDateRange(_buMois);
-  let [lignes, treso, paiements, ventes, addict, achats, achatsAddict, modeles, soldes, paiementsAnnee, lignesAnnee] = await Promise.all([
+  let [lignes, treso, paiements, ventes, addict, achats, achatsAddict, modeles, soldes, soldesCalcules] = await Promise.all([
     sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`),
     sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`),
@@ -42,8 +74,7 @@ async function renderBudget() {
     sbSelect('compta_addict_achats', `statut=eq.recue&date_reception=gte.${debut}&date_reception=lt.${fin}`),
     sbSelect('compta_depenses_fixes_modeles', 'actif=eq.true&order=categorie.asc'),
     sbSelect('compta_soldes_bancaires', 'select=*'),
-    sbSelect('compta_paiements', 'select=mois,annee,banque,mt_suivi,mt_seance&annee=eq.2026'),
-    sbSelect('compta_budget_lignes', 'select=mois,annee,banque,type,montant&annee=eq.2026'),
+    _calculerSoldesGroupes(_buMois, 2026),
   ]);
   _buModeles = modeles;
   _buSoldes = soldes;
@@ -61,29 +92,6 @@ async function renderBudget() {
   _buLignes = lignes;
   _buTreso = treso[0] || null;
 
-  // Soldes simplifiés à deux groupes (Banque = tous les comptes confondus, Espèces) :
-  // solde pointé à la main + tout ce qui a bougé (paiements clients, lignes de budget)
-  // sur les mois suivant le pointage, jusqu'au mois affiché — jamais stocké, recalculé
-  // à chaque affichage pour rester toujours juste.
-  const idxMois = (m, a) => a * 100 + MOIS.indexOf(m);
-  const idxAffiche = idxMois(_buMois, 2026);
-  const appartientAuGroupe = (banque, groupe) => groupe === 'Espèces' ? banque === 'Espèces' : !!banque && banque !== 'Espèces';
-  const soldesCalcules = {};
-  SOLDE_GROUPES.forEach(g => {
-    const chk = _buSoldes.find(s => s.banque === g);
-    if (!chk) { soldesCalcules[g] = null; return; }
-    const idxChk = idxMois(chk.mois, chk.annee);
-    let solde = Number(chk.solde || 0);
-    if (idxAffiche > idxChk) {
-      solde += paiementsAnnee
-        .filter(p => appartientAuGroupe(p.banque, g) && idxMois(p.mois, p.annee) > idxChk && idxMois(p.mois, p.annee) <= idxAffiche)
-        .reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
-      solde += lignesAnnee
-        .filter(l => appartientAuGroupe(l.banque, g) && idxMois(l.mois, l.annee) > idxChk && idxMois(l.mois, l.annee) <= idxAffiche)
-        .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);
-    }
-    soldesCalcules[g] = { solde, dateMaj: chk.date_maj, aJour: idxAffiche === idxChk };
-  });
   _buAuto = {
     coachingDistance: paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0),
     coachingSeance: paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0),
@@ -96,6 +104,15 @@ async function renderBudget() {
 
   const totRevenu = totalAutoRevenu + sum('revenu'), totFixe = sum('depense_fixe'), totVar = _buAuto.achatsFournisseur + sum('depense_variable'), totEparg = sum('epargne'), totCredit = sum('credit');
   const resultat = totRevenu - totFixe - totVar - totEparg - totCredit;
+
+  // Trésorerie actuelle : réelle (dernier pointage Banque + Espèces, projeté jusqu'à ce
+  // mois) si disponible, sinon théorique (départ + résultat du mois). Les deux sont
+  // affichées quand elles existent toutes les deux, pour repérer un écart de saisie.
+  const depart = Number(_buTreso?.depart || 0);
+  const actuelleTheorique = depart + resultat;
+  const aUnPointage = soldesCalcules['Banque'] || soldesCalcules['Espèces'];
+  const actuelleReelle = aUnPointage ? (soldesCalcules['Banque']?.solde || 0) + (soldesCalcules['Espèces']?.solde || 0) : null;
+  const ecartTresorerie = actuelleReelle !== null ? actuelleReelle - actuelleTheorique : null;
 
   const rowsType = _buLignes.filter(l => l.type === _buType);
   const { col: sortCol, dir: sortDir } = _buSort;
@@ -141,9 +158,19 @@ async function renderBudget() {
       <div class="row3">
         <div class="field"><label>Départ</label><input id="tr-depart" type="number" step="0.01" value="${_buTreso?.depart ?? 0}"></div>
         <div class="field"><label>Prévue</label><input id="tr-prevue" type="number" step="0.01" value="${_buTreso?.prevue ?? 0}"></div>
-        <div class="field"><label>Actuelle</label><input id="tr-actuelle" type="number" step="0.01" value="${_buTreso?.actuelle ?? 0}"></div>
+        <div class="field">
+          <label>Actuelle</label>
+          <div style="padding:9px 12px;background:var(--card2);border:1px solid var(--border);border-radius:10px;font-weight:700;">
+            ${actuelleReelle !== null ? fmtEUR(actuelleReelle) : fmtEUR(actuelleTheorique)}
+          </div>
+        </div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="saveTresorerie()">Enregistrer</button>
+      <div class="page-sub" style="margin-top:8px;">
+        ${actuelleReelle !== null
+          ? `Réelle, d'après le pointage banque/espèces · Théorique (départ + résultat) : ${fmtEUR(actuelleTheorique)}${ecartTresorerie !== null && Math.abs(ecartTresorerie) >= 1 ? ` · <span style="color:var(--gold);">écart ${ecartTresorerie>=0?'+':''}${fmtEUR(ecartTresorerie)}</span>` : ''}`
+          : `Estimée (départ + résultat du mois) — pointe tes soldes Banque/Espèces ci-dessous pour avoir la vraie valeur.`}
+      </div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="saveTresorerie()">Enregistrer départ/prévue</button>
     </div>
 
     <div class="card" style="margin-bottom:18px;">
@@ -397,6 +424,17 @@ async function sauvegarderSoldeBanque(banque) {
     await sbInsert('compta_soldes_bancaires?on_conflict=banque', {
       banque, solde, mois: _buMois, annee: 2026, date_maj: new Date().toISOString().slice(0, 10),
     }, { Prefer: 'return=representation,resolution=merge-duplicates' });
+
+    // Répercute immédiatement le pointage réel dans la trésorerie "actuelle" du mois
+    // affiché — c'est justement le contrôle qu'un pointage sert à faire.
+    const groupes = await _calculerSoldesGroupes(_buMois, 2026);
+    if (groupes['Banque'] || groupes['Espèces']) {
+      const actuelleReelle = (groupes['Banque']?.solde || 0) + (groupes['Espèces']?.solde || 0);
+      const tresoActuelle = (await sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`))[0];
+      if (tresoActuelle) await sbUpdate('compta_tresorerie', tresoActuelle.id, { actuelle: actuelleReelle });
+      else await sbInsert('compta_tresorerie', { mois: _buMois, annee: 2026, depart: 0, prevue: 0, actuelle: actuelleReelle });
+    }
+
     document.querySelector('.modal-bg')?.remove();
     toast('Solde mis à jour', 'ok');
     await renderBudget();
@@ -408,11 +446,10 @@ async function saveTresorerie() {
     mois: _buMois, annee: 2026,
     depart: parseFloat(document.getElementById('tr-depart').value) || 0,
     prevue: parseFloat(document.getElementById('tr-prevue').value) || 0,
-    actuelle: parseFloat(document.getElementById('tr-actuelle').value) || 0,
   };
   try {
     if (_buTreso) await sbUpdate('compta_tresorerie', _buTreso.id, body);
-    else await sbInsert('compta_tresorerie', body);
+    else await sbInsert('compta_tresorerie', Object.assign({ actuelle: 0 }, body));
     toast('Trésorerie enregistrée', 'ok');
     await renderBudget();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
