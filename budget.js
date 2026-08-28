@@ -36,11 +36,16 @@ const _appartientAuGroupeSolde = (banque, groupe) => groupe === 'Espèces' ? ban
 // Solde réel par groupe (Banque / Espèces) à un mois donné : dernier pointage + tout
 // ce qui a bougé depuis (paiements clients, lignes de budget) — recalculé à la demande,
 // jamais stocké, pour toujours refléter les derniers paiements/dépenses enregistrés.
+//
+// Pour le mois du pointage lui-même, on ne peut pas se contenter de comparer les mois
+// (ça exclurait tout ce qu'on ajoute APRÈS avoir pointé, dans le même mois — bug
+// signalé par le coach) : on compare l'horodatage de création de la ligne à celui du
+// pointage (updated_at), pas juste le mois affiché sur la ligne.
 async function _calculerSoldesGroupes(moisCible, anneeCible) {
   const [soldes, paiementsAnnee, lignesAnnee] = await Promise.all([
     sbSelect('compta_soldes_bancaires', 'select=*'),
-    sbSelect('compta_paiements', `select=mois,annee,banque,mt_suivi,mt_seance&annee=eq.${anneeCible}`),
-    sbSelect('compta_budget_lignes', `select=mois,annee,banque,type,montant&annee=eq.${anneeCible}`),
+    sbSelect('compta_paiements', `select=mois,annee,banque,mt_suivi,mt_seance,created_at&annee=eq.${anneeCible}`),
+    sbSelect('compta_budget_lignes', `select=mois,annee,banque,type,montant,created_at&annee=eq.${anneeCible}`),
   ]);
   const idxAffiche = _idxMois(moisCible, anneeCible);
   const resultat = {};
@@ -48,15 +53,20 @@ async function _calculerSoldesGroupes(moisCible, anneeCible) {
     const chk = soldes.find(s => s.banque === g);
     if (!chk) { resultat[g] = null; return; }
     const idxChk = _idxMois(chk.mois, chk.annee);
+    const chkInstant = new Date(chk.updated_at || chk.date_maj).getTime();
+    const apresChk = (l) => {
+      const idxL = _idxMois(l.mois, l.annee);
+      if (idxL > idxChk) return idxL <= idxAffiche;
+      if (idxL === idxChk) return idxL <= idxAffiche && new Date(l.created_at).getTime() > chkInstant;
+      return false;
+    };
     let solde = Number(chk.solde || 0);
-    if (idxAffiche > idxChk) {
-      solde += paiementsAnnee
-        .filter(p => _appartientAuGroupeSolde(p.banque, g) && _idxMois(p.mois, p.annee) > idxChk && _idxMois(p.mois, p.annee) <= idxAffiche)
-        .reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
-      solde += lignesAnnee
-        .filter(l => _appartientAuGroupeSolde(l.banque, g) && _idxMois(l.mois, l.annee) > idxChk && _idxMois(l.mois, l.annee) <= idxAffiche)
-        .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);
-    }
+    solde += paiementsAnnee
+      .filter(p => _appartientAuGroupeSolde(p.banque, g) && apresChk(p))
+      .reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
+    solde += lignesAnnee
+      .filter(l => _appartientAuGroupeSolde(l.banque, g) && apresChk(l))
+      .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);
     resultat[g] = { solde, dateMaj: chk.date_maj, aJour: idxAffiche === idxChk };
   });
   return resultat;
