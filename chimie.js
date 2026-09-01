@@ -476,7 +476,11 @@ function _tplFournisseur() {
             <input type="date" value="${dateGroupe}" onchange='_cfDateLot(${JSON.stringify(lignes.map(l=>l.id))}, this.value)' style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;">
             <button class="btn btn-ghost btn-sm" onclick='openCmdFournisseurModal(${JSON.stringify(dateGroupe)})'>+ Ligne</button>
           </div>
-          <div style="display:flex;gap:8px;">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select onchange='changerStatutBloc(${JSON.stringify(lignes.map(l=>l.id))}, this.value)' style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12.5px;">
+              <option value="">Statut du bloc…</option>
+              ${Object.keys(STATUT_FOURN).filter(s => s !== 'recue').map(s => `<option value="${s}">Tout passer en « ${STATUT_FOURN[s].label} »</option>`).join('')}
+            </select>
             <button class="btn btn-ghost btn-sm" onclick='copierCommandeFournisseur(${JSON.stringify(lignes.map(l=>l.id))})'>Copier</button>
             <button class="btn btn-primary btn-sm" onclick='ouvrirReceptionModal(null, ${JSON.stringify(lignes.map(l=>l.id))})'>Réceptionner le bloc</button>
           </div>
@@ -537,6 +541,15 @@ async function changerStatutFournisseur(id, statut) {
     const c = _chFournisseur.find(x => x.id === id);
     if (c) c.statut = statut;
     toast('Statut mis à jour', 'ok');
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
+}
+
+async function changerStatutBloc(ids, statut) {
+  if (!statut) return;
+  try {
+    for (const id of ids) await sbUpdate('compta_commandes_fournisseur', id, { statut });
+    toast('Statut du bloc mis à jour', 'ok');
+    await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); await renderChimie(); }
 }
 
