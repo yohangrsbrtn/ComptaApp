@@ -422,11 +422,13 @@ function _tplFournisseur() {
     const b = besoins[cle] = besoins[cle] || { nom: c.produit_nom, marque: c.marque, produitId: c.produit_id || null, demande: 0 };
     b.demande += Number(c.quantite || 0);
   });
+  // Trié par nom (pas par quantité à commander) — sinon la ligne saute de place
+  // dans le classement à chaque clic sur +/-, ce qui rend l'ajustement pénible.
   const besoinsListe = Object.values(besoins).map(b => {
     const produit = b.produitId ? _chProduits.find(p => p.id === b.produitId) : _chProduits.find(p => p.nom === b.nom);
     const stock = Number(produit?.stock_reel || 0);
     return { ...b, stock, aCommander: Math.max(0, b.demande - stock) };
-  }).sort((a, b) => b.aCommander - a.aCommander || b.demande - a.demande);
+  }).sort((a, b) => (a.nom || '').localeCompare(b.nom || ''));
 
   return `
     <div class="card kpi" style="margin-bottom:16px;max-width:280px;">
