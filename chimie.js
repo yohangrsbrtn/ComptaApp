@@ -515,7 +515,7 @@ function _tplFournisseur() {
                     <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterQteCmdFournisseur('${c.id}', 1)">+</button>
                   </div>
                 </td>
-                <td>${fmtEUR(c.prix_achat_unitaire)}</td>
+                <td><input type="number" step="0.01" value="${c.prix_achat_unitaire}" style="width:72px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" onchange="modifierPrixCmdFournisseur('${c.id}', this.value)"></td>
                 <td>${fmtEUR(c.quantite * c.prix_achat_unitaire)}</td>
                 <td style="display:flex;gap:6px;">
                   <button class="btn btn-primary btn-sm" onclick="ouvrirReceptionModal('${c.id}')">Réceptionner</button>
@@ -761,6 +761,15 @@ async function ajusterQteCmdFournisseur(id, delta) {
   const nouvelleQte = Math.max(1, Number(c.quantite || 1) + delta);
   try {
     await sbUpdate('compta_commandes_fournisseur', id, { quantite: nouvelleQte });
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function modifierPrixCmdFournisseur(id, valeur) {
+  const nouveauPrix = parseFloat(valeur);
+  if (isNaN(nouveauPrix)) return;
+  try {
+    await sbUpdate('compta_commandes_fournisseur', id, { prix_achat_unitaire: nouveauPrix });
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
