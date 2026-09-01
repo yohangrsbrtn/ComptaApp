@@ -813,19 +813,26 @@ async function annulerReceptionLot(ids) {
 }
 
 // ── COMMANDES CLIENTS → VALIDATION EN VENTES ────────────────────────
-let _ccFrais = {};
-
-function _ccTotalAvecFrais(cl, totalBrut) {
-  const frais = Number(_ccFrais[cl] || 0);
-  return totalBrut * (1 + frais / 100);
+function _ccTotalAvecFrais(totalBrut, frais) {
+  return totalBrut * (1 + Number(frais || 0) / 100);
 }
 
-function _ccFraisChange(cl, totalBrut, val) {
-  _ccFrais[cl] = parseFloat(val) || 0;
-  const total = _ccTotalAvecFrais(cl, totalBrut);
+// Affichage live pendant la saisie (pas d'appel réseau à chaque frappe).
+function _ccFraisApercu(cl, totalBrut, val) {
+  const total = _ccTotalAvecFrais(totalBrut, parseFloat(val) || 0);
   const idSafe = cl.replace(/[^a-zA-Z0-9]/g, '_');
   const span = document.getElementById(`cc-total-${idSafe}`);
   if (span) span.textContent = fmtEUR(total);
+}
+
+// Persisté sur toutes les lignes du client au blur/change — sinon le % de frais
+// disparaissait à chaque rafraîchissement (jamais sauvegardé en base avant).
+async function _ccFraisSauvegarder(cl, val) {
+  const frais = parseFloat(val) || 0;
+  const lignes = _chClients.filter(c => c.client === cl);
+  try {
+    for (const l of lignes) { await sbUpdate('compta_commandes_clients', l.id, { frais_pct: frais }); l.frais_pct = frais; }
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function _tplClients() {
@@ -838,6 +845,7 @@ function _tplClients() {
       const lignes = parClient[cl];
       const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
       const idSafe = cl.replace(/[^a-zA-Z0-9]/g, '_');
+      const frais = Number(lignes[0]?.frais_pct || 0);
       return `
       <div class="card" style="margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -874,13 +882,13 @@ function _tplClients() {
             <tr>
               <td colspan="3" style="text-align:right;font-weight:600;">Frais</td>
               <td>
-                <input type="number" step="0.1" value="${_ccFrais[cl] || 0}" style="width:70px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput='_ccFraisChange(${JSON.stringify(cl)}, ${totalBrut}, this.value)'> %
+                <input type="number" step="0.1" value="${frais}" style="width:70px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput='_ccFraisApercu(${JSON.stringify(cl)}, ${totalBrut}, this.value)' onchange='_ccFraisSauvegarder(${JSON.stringify(cl)}, this.value)'> %
               </td>
               <td></td>
             </tr>
             <tr>
               <td colspan="3" style="text-align:right;font-weight:700;">Total après frais</td>
-              <td id="cc-total-${idSafe}" style="font-weight:700;">${fmtEUR(_ccTotalAvecFrais(cl, totalBrut))}</td>
+              <td id="cc-total-${idSafe}" style="font-weight:700;">${fmtEUR(_ccTotalAvecFrais(totalBrut, frais))}</td>
               <td></td>
             </tr>
           </tfoot>
@@ -927,6 +935,7 @@ async function saveCmdClient(editId) {
   const opt = document.getElementById('cc-produit').selectedOptions[0];
   const client = document.getElementById('cc-client').value.trim();
   if (!client || !opt) { toast('Client et produit requis', 'err'); return; }
+  const fraisExistant = _chClients.find(c => c.client === client)?.frais_pct || 0;
   const body = {
     client,
     produit_id: opt.value,
@@ -934,6 +943,7 @@ async function saveCmdClient(editId) {
     marque: opt.dataset.marque || null,
     quantite: parseFloat(document.getElementById('cc-qte').value) || 1,
     prix_vente_unitaire: parseFloat(document.getElementById('cc-prix').value) || 0,
+    frais_pct: fraisExistant,
   };
   try {
     if (editId) {
@@ -1007,7 +1017,7 @@ function ouvrirDetailClient(client) {
 function ouvrirValidationClient(client) {
   const lignes = _chClients.filter(c => c.client === client);
   const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
-  const frais = Number(_ccFrais[client] || 0);
+  const frais = Number(lignes[0]?.frais_pct || 0);
   const totalAvecFrais = totalBrut * (1 + frais / 100);
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
@@ -1053,7 +1063,6 @@ async function confirmerValidationClient(client, totalBrut) {
       if (produit) await sbUpdate('compta_produits', produit.id, { stock_reel: Number(produit.stock_reel || 0) - Number(l.quantite || 0) });
       await sbDelete('compta_commandes_clients', l.id);
     }
-    delete _ccFrais[client];
     document.querySelector('.modal-bg')?.remove();
     toast(`Vente validée pour ${client}`, 'ok');
     await renderChimie();
