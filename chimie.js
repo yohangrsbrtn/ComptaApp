@@ -477,6 +477,7 @@ function _tplFournisseur() {
             <label class="page-sub" style="margin:0;">Date de commande</label>
             <input type="date" value="${dateGroupe}" onchange='_cfDateLot(${JSON.stringify(lignes.map(l=>l.id))}, this.value)' style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;">
             <button class="btn btn-ghost btn-sm" onclick='openCmdFournisseurModal(${JSON.stringify(dateGroupe)})'>+ Ligne</button>
+            <button class="btn btn-ghost btn-sm" onclick='openFraisPortModal(${JSON.stringify(dateGroupe)})'>+ Frais de port</button>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
             <select onchange='changerStatutBloc(${JSON.stringify(lignes.map(l=>l.id))}, this.value)' style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12.5px;">
@@ -594,11 +595,15 @@ function openCmdFournisseurModal(dateGroupe, prefill) {
   if (prefill?.produitId) _cfAutofill();
 }
 
-function openFraisPortModal() {
+function openFraisPortModal(dateGroupe) {
+  const today = new Date().toISOString().slice(0, 10);
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
     <h3>Nouveau frais de port</h3>
+    ${dateGroupe
+      ? `<div class="page-sub" style="margin-bottom:10px;">Rejoint le bloc du ${fmtDate(dateGroupe)}.</div>`
+      : `<div class="field"><label>Date de commande</label><input id="fp-date-commande" type="date" value="${today}"></div>`}
     <div class="field"><label>Détail (optionnel)</label><input id="fp-detail" placeholder="ex: Colissimo commande du 15/08"></div>
     <div class="field"><label>Montant (€)</label><input id="fp-montant" type="number" step="0.01" value="0"></div>
     <div class="field"><label>Statut</label>
@@ -610,21 +615,24 @@ function openFraisPortModal() {
     <div class="page-sub" style="margin-bottom:10px;">N'affecte aucun stock — compte uniquement comme dépense à la réception.</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
-      <button class="btn btn-primary" onclick="saveFraisPort()">Enregistrer</button>
+      <button class="btn btn-primary" onclick='saveFraisPort(${JSON.stringify(dateGroupe || '')})'>Enregistrer</button>
     </div>
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
 }
 
-async function saveFraisPort() {
+async function saveFraisPort(dateGroupe) {
+  const today = new Date().toISOString().slice(0, 10);
+  const dateCommande = dateGroupe || document.getElementById('fp-date-commande')?.value || today;
   const body = {
     produit_nom: 'Frais de port' + (document.getElementById('fp-detail').value.trim() ? ' — ' + document.getElementById('fp-detail').value.trim() : ''),
     quantite: 1,
     prix_achat_unitaire: parseFloat(document.getElementById('fp-montant').value) || 0,
     statut: document.getElementById('fp-statut').value,
     est_frais: true,
-    date: new Date().toISOString().slice(0, 10),
+    date: today,
+    date_commande: dateCommande,
   };
   try {
     await sbInsert('compta_commandes_fournisseur', body);
