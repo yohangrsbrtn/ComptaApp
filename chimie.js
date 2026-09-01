@@ -222,9 +222,9 @@ function _tplStock() {
       <button class="btn btn-primary" onclick="openProduitModal()">+ Produit</button>
     </div>
     <div class="grid cards4" style="margin-bottom:18px;">
-      <div class="card kpi"><div class="label">Valeur stock à l'achat</div><div class="value">${fmtEUR(totalAchat)}</div></div>
-      <div class="card kpi"><div class="label">Valeur stock à la revente</div><div class="value">${fmtEUR(totalVente)}</div></div>
-      <div class="card kpi"><div class="label">Bénéfice estimé</div><div class="value pos">${fmtEUR(totalVente - totalAchat)}</div></div>
+      <div class="card kpi"><div class="label">Valeur stock à l'achat</div><div class="value" id="stock-total-achat">${fmtEUR(totalAchat)}</div></div>
+      <div class="card kpi"><div class="label">Valeur stock à la revente</div><div class="value" id="stock-total-vente">${fmtEUR(totalVente)}</div></div>
+      <div class="card kpi"><div class="label">Bénéfice estimé</div><div class="value pos" id="stock-total-benef">${fmtEUR(totalVente - totalAchat)}</div></div>
     </div>
     <div class="table-wrap">
       <table>
@@ -240,7 +240,7 @@ function _tplStock() {
               <td>
                 <div style="display:flex;align-items:center;gap:6px;">
                   <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', -1)">−</button>
-                  <input type="number" step="0.01" value="${p.stock_reel}" style="width:64px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;text-align:center;" onchange="modifierStockProduit('${p.id}', this.value)">
+                  <input id="stock-input-${p.id}" type="number" step="0.01" value="${p.stock_reel}" style="width:64px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;text-align:center;" onchange="modifierStockProduit('${p.id}', this.value)">
                   <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', 1)">+</button>
                 </div>
               </td>
@@ -331,7 +331,15 @@ async function modifierStockProduit(id, valeur) {
   try {
     await sbUpdate('compta_produits', id, { stock_reel: nouveauStock });
     p.stock_reel = nouveauStock;
-    document.getElementById('ch-body').innerHTML = _tplStock();
+    // Met juste à jour ce champ et les totaux, sans réafficher tout le tableau —
+    // sinon, trié par la colonne Stock, la ligne changerait de place à chaque clic.
+    const input = document.getElementById(`stock-input-${id}`);
+    if (input) input.value = nouveauStock;
+    const totalAchat = _chProduits.reduce((s, x) => s + Number(x.stock_reel || 0) * Number(x.prix_achat || 0), 0);
+    const totalVente = _chProduits.reduce((s, x) => s + Number(x.stock_reel || 0) * Number(x.prix_vente || 0), 0);
+    document.getElementById('stock-total-achat').textContent = fmtEUR(totalAchat);
+    document.getElementById('stock-total-vente').textContent = fmtEUR(totalVente);
+    document.getElementById('stock-total-benef').textContent = fmtEUR(totalVente - totalAchat);
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
