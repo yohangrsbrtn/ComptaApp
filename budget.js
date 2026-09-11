@@ -72,6 +72,32 @@ function _svgBarresCategories(items) {
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;font-family:inherit;">${rows}</svg>`;
 }
 
+// Trésorerie actuelle d'un mois donné (réelle si pointée, sinon départ+résultat) —
+// sert à reporter automatiquement le départ du mois suivant.
+async function _calculerActuelleMois(mois, annee) {
+  const { debut, fin } = _moisDateRange(mois);
+  const [lignes, treso, paiements, ventes, addict, achats, achatsAddict, soldesGroupes] = await Promise.all([
+    sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(mois)}&annee=eq.${annee}`),
+    sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(mois)}&annee=eq.${annee}`),
+    sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(mois)}&annee=eq.${annee}`),
+    sbSelect('compta_ventes', `annulee=eq.false&date=gte.${debut}&date=lt.${fin}`),
+    sbSelect('compta_addict', `date=gte.${debut}&date=lt.${fin}`),
+    sbSelect('compta_commandes_fournisseur', `recue=eq.true&date_reception=gte.${debut}&date_reception=lt.${fin}`),
+    sbSelect('compta_addict_achats', `statut=eq.recue&date_reception=gte.${debut}&date_reception=lt.${fin}`),
+    _calculerSoldesGroupes(mois, annee),
+  ]);
+  const sumType = (t) => lignes.filter(l => l.type === t).reduce((s, l) => s + Number(l.montant || 0), 0);
+  const coaching = paiements.reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
+  const chimie = ventes.reduce((s, v) => s + (Number(v.total_vente || 0) - Number(v.total_achat || 0)), 0);
+  const addictB = addict.reduce((s, a) => s + (Number(a.vente || 0) - Number(a.achat || 0)), 0);
+  const achatsFournisseur = achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0)
+    + achatsAddict.reduce((s, a) => s + Number(a.quantite || 0) * Number(a.prix_achat_unitaire || 0), 0);
+  const resultat = (coaching + chimie + addictB + sumType('revenu')) - sumType('depense_fixe') - (achatsFournisseur + sumType('depense_variable')) - sumType('epargne') - sumType('credit');
+  const theorique = Number(treso[0]?.depart || 0) + resultat;
+  const aPointage = soldesGroupes['Banque'] || soldesGroupes['Espèces'];
+  return aPointage ? (soldesGroupes['Banque']?.solde || 0) + (soldesGroupes['Espèces']?.solde || 0) : theorique;
+}
+
 const _idxMois = (m, a) => a * 100 + MOIS.indexOf(m);
 const _appartientAuGroupeSolde = (banque, groupe) => groupe === 'Espèces' ? banque === 'Espèces' : !!banque && banque !== 'Espèces';
 
@@ -143,6 +169,19 @@ async function renderBudget() {
 
   _buLignes = lignes;
   _buTreso = treso[0] || null;
+
+  // Départ auto-reporté depuis l'actuelle du mois précédent, la toute première fois
+  // qu'on ouvre un nouveau mois (aucune ligne trésorerie encore créée pour lui).
+  if (!_buTreso) {
+    const idx = MOIS.indexOf(_buMois);
+    const moisPrec = idx === 0 ? 'DECEMBRE' : MOIS[idx - 1];
+    const anneePrec = idx === 0 ? 2026 - 1 : 2026;
+    const departReporte = await _calculerActuelleMois(moisPrec, anneePrec);
+    if (departReporte) {
+      await sbInsert('compta_tresorerie', { mois: _buMois, annee: 2026, depart: departReporte, prevue: 0, actuelle: 0 });
+      _buTreso = (await sbSelect('compta_tresorerie', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026`))[0] || null;
+    }
+  }
 
   _buAuto = {
     coachingDistance: paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0),
