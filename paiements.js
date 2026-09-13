@@ -95,7 +95,13 @@ async function _renderPaiementsMois() {
       </table>
     </div>
 
-    <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Encaissements validés — ${_paMois}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 10px;flex-wrap:wrap;gap:8px;">
+      <div class="page-sub" style="font-weight:700;">Encaissements validés — ${_paMois}</div>
+      ${_paRows.length ? `<div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="pointerToutUrssaf(true)">Tout pointer URSSAF</button>
+        <button class="btn btn-ghost btn-sm" onclick="pointerToutUrssaf(false)">Tout dépointer</button>
+      </div>` : ''}
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Client</th><th>Date</th><th>Suivi</th><th>Séance</th><th>Banque</th><th>URSSAF</th><th></th></tr></thead>
@@ -107,7 +113,7 @@ async function _renderPaiementsMois() {
               <td>${p.mt_suivi ? fmtEUR(p.mt_suivi) : '—'}</td>
               <td>${p.mt_seance ? fmtEUR(p.mt_seance) : '—'}</td>
               <td>${esc(p.banque) || '—'}</td>
-              <td>${p.decla_urssaf ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>'}</td>
+              <td style="cursor:pointer;" onclick="toggleUrssaf('${p.id}', ${!p.decla_urssaf})" title="Cliquer pour pointer/dépointer">${p.decla_urssaf ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>'}</td>
               <td><button class="btn btn-ghost btn-sm" onclick="deletePaiement('${p.id}')">Suppr.</button></td>
             </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucun encaissement pour ${_paMois}</div></td></tr>`}
         </tbody>
@@ -493,4 +499,19 @@ async function deletePaiement(id) {
   if (!confirm('Supprimer cet encaissement ?')) return;
   try { await sbDelete('compta_paiements', id); await renderPaiements(); toast('Supprimé', 'ok'); }
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function toggleUrssaf(id, valeur) {
+  try {
+    await sbUpdate('compta_paiements', id, { decla_urssaf: valeur });
+    await renderPaiements();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function pointerToutUrssaf(valeur) {
+  try {
+    for (const p of _paRows) await sbUpdate('compta_paiements', p.id, { decla_urssaf: valeur });
+    toast(valeur ? 'Tout pointé pour la déclaration URSSAF' : 'Tout dépointé', 'ok');
+    await renderPaiements();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
