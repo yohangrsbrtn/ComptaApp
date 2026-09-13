@@ -70,7 +70,7 @@ async function _renderPaiementsMois() {
       <div class="card kpi"><div class="label">Suivis</div><div class="value pos">${fmtEUR(totalSuivi)}</div></div>
       <div class="card kpi"><div class="label">Séances</div><div class="value pos">${fmtEUR(totalSeance)}</div></div>
       <div class="card kpi"><div class="label">Total</div><div class="value">${fmtEUR(totalSuivi + totalSeance)}</div></div>
-      <div class="card kpi"><div class="label">Déclaré URSSAF</div><div class="value">${fmtEUR(totalUrssaf)}</div></div>
+      <div class="card kpi"><div class="label">Déclaré URSSAF</div><div class="value" id="pa-total-urssaf">${fmtEUR(totalUrssaf)}</div></div>
     </div>
 
     <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Clients en attente de paiement — ${_paMois} (${enAttente.length})</div>
@@ -113,7 +113,7 @@ async function _renderPaiementsMois() {
               <td>${p.mt_suivi ? fmtEUR(p.mt_suivi) : '—'}</td>
               <td>${p.mt_seance ? fmtEUR(p.mt_seance) : '—'}</td>
               <td>${esc(p.banque) || '—'}</td>
-              <td style="cursor:pointer;" onclick="toggleUrssaf('${p.id}', ${!p.decla_urssaf})" title="Cliquer pour pointer/dépointer">${p.decla_urssaf ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>'}</td>
+              <td id="pa-urssaf-${p.id}" style="cursor:pointer;" onclick="toggleUrssaf('${p.id}')" title="Cliquer pour pointer/dépointer">${p.decla_urssaf ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>'}</td>
               <td><button class="btn btn-ghost btn-sm" onclick="deletePaiement('${p.id}')">Suppr.</button></td>
             </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucun encaissement pour ${_paMois}</div></td></tr>`}
         </tbody>
@@ -501,17 +501,36 @@ async function deletePaiement(id) {
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-async function toggleUrssaf(id, valeur) {
+function _majTotalUrssaf() {
+  const total = _paRows.filter(p => p.decla_urssaf).reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
+  const el = document.getElementById('pa-total-urssaf');
+  if (el) el.textContent = fmtEUR(total);
+}
+
+// Met juste à jour le badge et le total concernés, sans réafficher toute la page —
+// sinon un simple clic faisait sauter le scroll et rafraîchissait tout l'écran.
+async function toggleUrssaf(id) {
+  const p = _paRows.find(x => x.id === id);
+  if (!p) return;
+  const nouvelleValeur = !p.decla_urssaf;
   try {
-    await sbUpdate('compta_paiements', id, { decla_urssaf: valeur });
-    await renderPaiements();
+    await sbUpdate('compta_paiements', id, { decla_urssaf: nouvelleValeur });
+    p.decla_urssaf = nouvelleValeur;
+    const cell = document.getElementById(`pa-urssaf-${id}`);
+    if (cell) cell.innerHTML = nouvelleValeur ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>';
+    _majTotalUrssaf();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 async function pointerToutUrssaf(valeur) {
   try {
-    for (const p of _paRows) await sbUpdate('compta_paiements', p.id, { decla_urssaf: valeur });
+    for (const p of _paRows) {
+      await sbUpdate('compta_paiements', p.id, { decla_urssaf: valeur });
+      p.decla_urssaf = valeur;
+      const cell = document.getElementById(`pa-urssaf-${p.id}`);
+      if (cell) cell.innerHTML = valeur ? '<span class="badge badge-green">Oui</span>' : '<span class="badge badge-muted">Non</span>';
+    }
+    _majTotalUrssaf();
     toast(valeur ? 'Tout pointé pour la déclaration URSSAF' : 'Tout dépointé', 'ok');
-    await renderPaiements();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
