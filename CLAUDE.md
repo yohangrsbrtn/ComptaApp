@@ -37,3 +37,4 @@ Migrations SQL dans `supabase/migrations/`.
 - **Numérotation factures** : calcule le dernier numéro existant du mois (`compta_factures.numero like 'FAC-2026-MM%'`) avant d'incrémenter — pas de compteur séparé.
 - **Auth** : un seul utilisateur Supabase Auth (email/password), pas d'inscription libre. Token stocké dans `localStorage.ca_token`.
 - **Rapprochement client/paiement** : `compta_paiements.client_id` posé à la création si un client est sélectionné dans le formulaire ; sinon fallback sur `nom_client` (recherche approximative dans `factures.js` → `_trouverClientLocal`).
+- **Cache GitHub Pages (10 min)** : chaque `<script src="xxx.js?v=N">` dans `index.html` doit voir son `N` incrémenté à chaque modification d'un fichier `.js` — sinon le navigateur du coach continue de servir l'ancienne version même après rechargement (le bandeau de mise à jour ne surveille que `index.html` lui-même, pas les fichiers qu'il charge).

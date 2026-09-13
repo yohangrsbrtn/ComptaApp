@@ -151,13 +151,17 @@
 <body>
 <div id="root"></div>
 
-<script src="api.js"></script>
-<script src="clients.js"></script>
-<script src="paiements.js"></script>
-<script src="factures.js"></script>
-<script src="budget.js"></script>
-<script src="chimie.js"></script>
-<script src="addict.js"></script>
+<!-- ?v=N contourne le cache 10 min de GitHub Pages sur ces fichiers (index.html a son
+     propre contournement via l'ETag, mais un simple rechargement ne suffit pas à
+     rafraîchir ces <script src> tant que leur URL ne change pas) — bump ce numéro à
+     chaque déploiement qui touche un de ces fichiers. -->
+<script src="api.js?v=2"></script>
+<script src="clients.js?v=2"></script>
+<script src="paiements.js?v=2"></script>
+<script src="factures.js?v=2"></script>
+<script src="budget.js?v=2"></script>
+<script src="chimie.js?v=2"></script>
+<script src="addict.js?v=2"></script>
 <script>
 const S = { page: 'dashboard', clients: [], loading: false };
 
