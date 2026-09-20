@@ -144,6 +144,7 @@ function _tplVentes() {
   const totalAchat = actives.reduce((s, v) => s + Number(v.total_achat || 0), 0);
   const totalVente = actives.reduce((s, v) => s + Number(v.total_vente || 0), 0);
   const benef = totalVente - totalAchat;
+  const resteAEncaisser = actives.reduce((s, v) => s + Math.max(0, Number(v.total_vente || 0) - Number(v.montant_paye ?? v.total_vente ?? 0)), 0);
 
   const term = _chVentesSearch.toLowerCase();
   const filtered = _chVentes.filter(v => !term || (v.client || '').toLowerCase().includes(term));
@@ -160,14 +161,17 @@ function _tplVentes() {
       <div class="card kpi"><div class="label">Total achat</div><div class="value">${fmtEUR(totalAchat)}</div></div>
       <div class="card kpi"><div class="label">Total vente</div><div class="value pos">${fmtEUR(totalVente)}</div></div>
       <div class="card kpi"><div class="label">Bénéfice</div><div class="value pos">${fmtEUR(benef)}</div></div>
+      <div class="card kpi"><div class="label">Reste à encaisser</div><div class="value" style="color:${resteAEncaisser>0.01?'var(--red)':'inherit'}">${fmtEUR(resteAEncaisser)}</div></div>
     </div>
     <div class="toolbar"><div class="search"><input placeholder="Rechercher un client…" value="${esc(_chVentesSearch)}" oninput="_chVentesSearch=this.value;renderChimie()"></div></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th>Reste dû</th><th></th></tr></thead>
         <tbody>
           ${sorted.length ? sorted.map((v, i) => {
             const memeGroupe = i > 0 && sorted[i-1].date === v.date && sorted[i-1].client === v.client;
+            const paye = Number(v.montant_paye ?? v.total_vente ?? 0);
+            const resteDu = Math.round((Number(v.total_vente || 0) - paye) * 100) / 100;
             return `
             <tr style="${v.annulee ? 'opacity:.45;' : ''}${memeGroupe ? 'border-top:none;' : ''}">
               <td>${memeGroupe ? '' : fmtDate(v.date)}</td>
@@ -177,12 +181,50 @@ function _tplVentes() {
               <td>${fmtEUR(v.total_achat)}</td>
               <td>${fmtEUR(v.total_vente)}</td>
               <td style="color:${v.benefice>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(v.benefice)}</td>
-              <td>${v.annulee ? '<span class="badge badge-muted">Annulée</span>' : `<button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}</td>
+              <td id="vente-reste-${v.id}" style="color:${resteDu>0.01?'var(--red)':'inherit'}">${!v.annulee && resteDu>0.01 ? fmtEUR(resteDu) : '—'}</td>
+              <td>
+                ${v.annulee ? '<span class="badge badge-muted">Annulée</span>' : `
+                  ${resteDu>0.01 ? `<button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde('${v.id}')">Encaisser</button>` : ''}
+                  <button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}
+              </td>
             </tr>`;
-          }).join('') : `<tr><td colspan="8"><div class="empty">Aucune vente</div></td></tr>`}
+          }).join('') : `<tr><td colspan="9"><div class="empty">Aucune vente</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
+}
+
+function ouvrirEncaisserSolde(id) {
+  const v = _chVentes.find(x => x.id === id);
+  if (!v) return;
+  const resteDu = Math.round((Number(v.total_vente || 0) - Number(v.montant_paye ?? 0)) * 100) / 100;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Encaisser le solde — ${esc(v.client) || 'Sans client'}</h3>
+    <div class="page-sub" style="margin-bottom:14px;">${esc(v.produit_nom)} — reste dû : <b>${fmtEUR(resteDu)}</b></div>
+    <div class="field"><label>Montant encaissé maintenant (€)</label><input id="es-montant" type="number" step="0.01" value="${resteDu.toFixed(2)}"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="confirmerEncaisserSolde('${id}')">Valider</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function confirmerEncaisserSolde(id) {
+  const v = _chVentes.find(x => x.id === id);
+  if (!v) return;
+  const montant = parseFloat(document.getElementById('es-montant').value) || 0;
+  const nouveauPaye = Math.min(Number(v.total_vente || 0), Number(v.montant_paye || 0) + montant);
+  try {
+    await sbUpdate('compta_ventes', id, { montant_paye: nouveauPaye });
+    v.montant_paye = nouveauPaye;
+    document.querySelector('.modal-bg')?.remove();
+    toast('Encaissement enregistré', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 async function annulerVente(id) {
@@ -1025,7 +1067,8 @@ function ouvrirValidationClient(client) {
     <h3>Valider la vente — ${esc(client)}</h3>
     <div class="page-sub" style="margin-bottom:14px;">Total avant frais : <b>${fmtEUR(totalBrut)}</b></div>
     <div class="field"><label>Frais d'envoi / majoration (%)</label><input id="vc-remise" type="number" step="0.1" value="${frais}" oninput="_vcRecalc(${totalBrut})"></div>
-    <div class="field"><label>Montant réel encaissé (€) — c'est ce total qui sera comptabilisé</label><input id="vc-montant" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}"></div>
+    <div class="field"><label>Total facturé (€)</label><input id="vc-montant" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}" oninput="_vcSyncPaye()"></div>
+    <div class="field"><label>Payé maintenant (€) — laisse en dessous du total si le client règle en plusieurs fois</label><input id="vc-paye" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick='confirmerValidationClient(${JSON.stringify(client)}, ${totalBrut})'>Valider</button>
@@ -1038,10 +1081,17 @@ function ouvrirValidationClient(client) {
 function _vcRecalc(totalBrut) {
   const remise = parseFloat(document.getElementById('vc-remise').value) || 0;
   document.getElementById('vc-montant').value = (totalBrut * (1 + remise / 100)).toFixed(2);
+  _vcSyncPaye();
+}
+
+function _vcSyncPaye() {
+  document.getElementById('vc-paye').value = document.getElementById('vc-montant').value;
 }
 
 async function confirmerValidationClient(client, totalBrut) {
   const montantReel = parseFloat(document.getElementById('vc-montant').value) || totalBrut;
+  const montantPaye = Math.min(parseFloat(document.getElementById('vc-paye').value) || 0, montantReel);
+  const ratioPaye = montantReel > 0 ? montantPaye / montantReel : 1;
   const ratio = totalBrut > 0 ? montantReel / totalBrut : 1;
   const lignes = _chClients.filter(c => c.client === client);
   const today = new Date().toISOString().slice(0, 10);
@@ -1053,11 +1103,13 @@ async function confirmerValidationClient(client, totalBrut) {
       const prixVenteAjuste = Math.round(l.prix_vente_unitaire * ratio * 100) / 100;
       const totalAchat = Math.round(prixAchat * l.quantite * 100) / 100;
       const totalVente = Math.round(prixVenteAjuste * l.quantite * 100) / 100;
+      const montantPayeLigne = Math.round(totalVente * ratioPaye * 100) / 100;
 
       await sbInsert('compta_ventes', {
         date: today, client, produit_nom: l.produit_nom, marque: l.marque,
         quantite: l.quantite, prix_achat_unitaire: prixAchat, prix_vente_unitaire: prixVenteAjuste,
         total_achat: totalAchat, total_vente: totalVente, benefice: Math.round((totalVente - totalAchat) * 100) / 100,
+        montant_paye: montantPayeLigne,
       });
 
       if (produit) await sbUpdate('compta_produits', produit.id, { stock_reel: Number(produit.stock_reel || 0) - Number(l.quantite || 0) });
