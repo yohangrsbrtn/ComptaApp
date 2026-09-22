@@ -185,6 +185,7 @@ function _tplVentes() {
               <td>
                 ${v.annulee ? '<span class="badge badge-muted">Annulée</span>' : `
                   ${resteDu>0.01 ? `<button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde('${v.id}')">Encaisser</button>` : ''}
+                  <button class="btn btn-ghost btn-sm" onclick="ouvrirCorrigerVente('${v.id}')">Corriger</button>
                   <button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}
               </td>
             </tr>`;
@@ -211,6 +212,40 @@ function ouvrirEncaisserSolde(id) {
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+}
+
+function ouvrirCorrigerVente(id) {
+  const v = _chVentes.find(x => x.id === id);
+  if (!v) return;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Corriger — ${esc(v.client) || 'Sans client'}</h3>
+    <div class="page-sub" style="margin-bottom:14px;">${esc(v.produit_nom)}</div>
+    <div class="field"><label>Total facturé (€)</label><input id="cv-total" type="number" step="0.01" value="${Number(v.total_vente || 0).toFixed(2)}"></div>
+    <div class="field"><label>Payé (€)</label><input id="cv-paye" type="number" step="0.01" value="${Number(v.montant_paye ?? v.total_vente ?? 0).toFixed(2)}"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
+      <button class="btn btn-primary" onclick="confirmerCorrigerVente('${id}')">Enregistrer</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function confirmerCorrigerVente(id) {
+  const v = _chVentes.find(x => x.id === id);
+  if (!v) return;
+  const total = parseFloat(document.getElementById('cv-total').value) || 0;
+  const paye = Math.min(parseFloat(document.getElementById('cv-paye').value) || 0, total);
+  const benefice = Math.round((total - Number(v.total_achat || 0)) * 100) / 100;
+  try {
+    await sbUpdate('compta_ventes', id, { total_vente: total, montant_paye: paye, benefice });
+    v.total_vente = total; v.montant_paye = paye; v.benefice = benefice;
+    document.querySelector('.modal-bg')?.remove();
+    toast('Vente corrigée', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 async function confirmerEncaisserSolde(id) {
@@ -1057,6 +1092,7 @@ function ouvrirDetailClient(client) {
 }
 
 function ouvrirValidationClient(client) {
+  _vcPayeTouched = false;
   const lignes = _chClients.filter(c => c.client === client);
   const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
   const frais = Number(lignes[0]?.frais_pct || 0);
@@ -1068,7 +1104,7 @@ function ouvrirValidationClient(client) {
     <div class="page-sub" style="margin-bottom:14px;">Total avant frais : <b>${fmtEUR(totalBrut)}</b></div>
     <div class="field"><label>Frais d'envoi / majoration (%)</label><input id="vc-remise" type="number" step="0.1" value="${frais}" oninput="_vcRecalc(${totalBrut})"></div>
     <div class="field"><label>Total facturé (€)</label><input id="vc-montant" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}" oninput="_vcSyncPaye()"></div>
-    <div class="field"><label>Payé maintenant (€) — laisse en dessous du total si le client règle en plusieurs fois</label><input id="vc-paye" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}"></div>
+    <div class="field"><label>Payé maintenant (€) — laisse en dessous du total si le client règle en plusieurs fois</label><input id="vc-paye" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}" oninput="_vcPayeTouched=true"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick='confirmerValidationClient(${JSON.stringify(client)}, ${totalBrut})'>Valider</button>
@@ -1078,13 +1114,16 @@ function ouvrirValidationClient(client) {
   document.body.appendChild(bg);
 }
 
+let _vcPayeTouched = false;
+
 function _vcRecalc(totalBrut) {
   const remise = parseFloat(document.getElementById('vc-remise').value) || 0;
   document.getElementById('vc-montant').value = (totalBrut * (1 + remise / 100)).toFixed(2);
-  _vcSyncPaye();
+  if (!_vcPayeTouched) _vcSyncPaye();
 }
 
 function _vcSyncPaye() {
+  if (_vcPayeTouched) return;
   document.getElementById('vc-paye').value = document.getElementById('vc-montant').value;
 }
 
