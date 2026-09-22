@@ -266,7 +266,14 @@ async function confirmerEncaisserSolde(id) {
 
 async function annulerVente(id) {
   const v = _chVentes.find(x => x.id === id);
-  if (!v || !confirm(`Annuler la vente de ${v.produit_nom} ? La ligne sera remise dans les commandes clients de ${v.client || 'ce client'}.`)) return;
+  if (!v) return;
+  if (v.frais_ligne) {
+    if (!confirm(`Annuler la ligne de frais de ${fmtEUR(v.total_vente)} ?`)) return;
+    try { await sbUpdate('compta_ventes', id, { annulee: true }); toast('Ligne de frais annulée', 'ok'); await renderChimie(); }
+    catch (e) { toast('Erreur : ' + e.message, 'err'); }
+    return;
+  }
+  if (!confirm(`Annuler la vente de ${v.produit_nom} ? La ligne sera remise dans les commandes clients de ${v.client || 'ce client'}.`)) return;
   try {
     await sbUpdate('compta_ventes', id, { annulee: true });
     const p = _chProduits.find(x => x.nom === v.produit_nom);
@@ -1150,7 +1157,7 @@ async function confirmerValidationClient(client, totalBrut) {
   const montantReel = parseFloat(document.getElementById('vc-montant').value) || totalBrut;
   const montantPaye = Math.min(parseFloat(document.getElementById('vc-paye').value) || 0, montantReel);
   const ratioPaye = montantReel > 0 ? montantPaye / montantReel : 1;
-  const ratio = totalBrut > 0 ? montantReel / totalBrut : 1;
+  const fraisMontant = Math.round((montantReel - totalBrut) * 100) / 100;
   const lignes = _chClients.filter(c => c.client === client);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -1158,14 +1165,13 @@ async function confirmerValidationClient(client, totalBrut) {
     for (const l of lignes) {
       const produit = l.produit_id ? _chProduits.find(p => p.id === l.produit_id) : _chProduits.find(p => p.nom === l.produit_nom);
       const prixAchat = produit?.prix_achat || 0;
-      const prixVenteAjuste = Math.round(l.prix_vente_unitaire * ratio * 100) / 100;
       const totalAchat = Math.round(prixAchat * l.quantite * 100) / 100;
-      const totalVente = Math.round(prixVenteAjuste * l.quantite * 100) / 100;
+      const totalVente = Math.round(l.prix_vente_unitaire * l.quantite * 100) / 100;
       const montantPayeLigne = Math.round(totalVente * ratioPaye * 100) / 100;
 
       await sbInsert('compta_ventes', {
         date: today, client, produit_nom: l.produit_nom, marque: l.marque,
-        quantite: l.quantite, prix_achat_unitaire: prixAchat, prix_vente_unitaire: prixVenteAjuste,
+        quantite: l.quantite, prix_achat_unitaire: prixAchat, prix_vente_unitaire: l.prix_vente_unitaire,
         total_achat: totalAchat, total_vente: totalVente, benefice: Math.round((totalVente - totalAchat) * 100) / 100,
         montant_paye: montantPayeLigne,
       });
@@ -1173,6 +1179,17 @@ async function confirmerValidationClient(client, totalBrut) {
       if (produit) await sbUpdate('compta_produits', produit.id, { stock_reel: Number(produit.stock_reel || 0) - Number(l.quantite || 0) });
       await sbDelete('compta_commandes_clients', l.id);
     }
+
+    if (Math.abs(fraisMontant) > 0.005) {
+      const montantPayeFrais = Math.round(fraisMontant * ratioPaye * 100) / 100;
+      await sbInsert('compta_ventes', {
+        date: today, client, produit_nom: "Frais d'envoi / majoration", marque: null,
+        quantite: 1, prix_achat_unitaire: 0, prix_vente_unitaire: fraisMontant,
+        total_achat: 0, total_vente: fraisMontant, benefice: fraisMontant,
+        montant_paye: montantPayeFrais, frais_ligne: true,
+      });
+    }
+
     document.querySelector('.modal-bg')?.remove();
     toast(`Vente validée pour ${client}`, 'ok');
     await renderChimie();
