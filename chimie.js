@@ -183,7 +183,9 @@ function _tplVentes() {
               <td style="color:${v.benefice>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(v.benefice)}</td>
               <td id="vente-reste-${v.id}" style="color:${resteDu>0.01?'var(--red)':'inherit'}">${!v.annulee && resteDu>0.01 ? fmtEUR(resteDu) : '—'}</td>
               <td>
-                ${v.annulee ? '<span class="badge badge-muted">Annulée</span>' : `
+                ${v.annulee ? `
+                  <span class="badge badge-muted">Annulée</span>
+                  <button class="btn btn-ghost btn-sm" onclick="reactiverVente('${v.id}')">Réactiver</button>` : `
                   ${resteDu>0.01 ? `<button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde('${v.id}')">Encaisser</button>` : ''}
                   <button class="btn btn-ghost btn-sm" onclick="ouvrirCorrigerVente('${v.id}')">Corriger</button>
                   <button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}
@@ -275,6 +277,18 @@ async function annulerVente(id) {
       quantite: v.quantite, prix_vente_unitaire: v.prix_vente_unitaire, frais_pct: fraisExistant,
     });
     toast('Vente annulée, ligne remise dans les commandes clients', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function reactiverVente(id) {
+  const v = _chVentes.find(x => x.id === id);
+  if (!v || !confirm(`Réactiver la vente de ${v.produit_nom} ? Le stock sera redéduit.`)) return;
+  try {
+    await sbUpdate('compta_ventes', id, { annulee: false });
+    const p = _chProduits.find(x => x.nom === v.produit_nom);
+    if (p) await sbUpdate('compta_produits', p.id, { stock_reel: Number(p.stock_reel || 0) - Number(v.quantite || 0) });
+    toast('Vente réactivée — utilise "Corriger" pour ajuster total/payé', 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
