@@ -264,12 +264,17 @@ async function confirmerEncaisserSolde(id) {
 
 async function annulerVente(id) {
   const v = _chVentes.find(x => x.id === id);
-  if (!v || !confirm(`Annuler la vente de ${v.produit_nom} ?`)) return;
+  if (!v || !confirm(`Annuler la vente de ${v.produit_nom} ? La ligne sera remise dans les commandes clients de ${v.client || 'ce client'}.`)) return;
   try {
     await sbUpdate('compta_ventes', id, { annulee: true });
     const p = _chProduits.find(x => x.nom === v.produit_nom);
     if (p) await sbUpdate('compta_produits', p.id, { stock_reel: Number(p.stock_reel || 0) + Number(v.quantite || 0) });
-    toast('Vente annulée, stock remis à jour', 'ok');
+    const fraisExistant = _chClients.find(c => c.client === v.client)?.frais_pct || 0;
+    await sbInsert('compta_commandes_clients', {
+      client: v.client || '', produit_id: p?.id || null, produit_nom: v.produit_nom, marque: v.marque,
+      quantite: v.quantite, prix_vente_unitaire: v.prix_vente_unitaire, frais_pct: fraisExistant,
+    });
+    toast('Vente annulée, ligne remise dans les commandes clients', 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
