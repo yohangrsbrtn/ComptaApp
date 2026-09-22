@@ -168,11 +168,19 @@ function _tplVentes() {
       <table>
         <thead><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th>Reste dû</th><th></th></tr></thead>
         <tbody>
-          ${sorted.length ? sorted.map((v, i) => {
-            const memeGroupe = i > 0 && sorted[i-1].date === v.date && sorted[i-1].client === v.client;
-            const paye = Number(v.montant_paye ?? v.total_vente ?? 0);
-            const resteDu = Math.round((Number(v.total_vente || 0) - paye) * 100) / 100;
-            return `
+          ${sorted.length ? (() => {
+            const out = [];
+            let g = { achat: 0, vente: 0, benef: 0, reste: 0 };
+            sorted.forEach((v, i) => {
+              const memeGroupe = i > 0 && sorted[i-1].date === v.date && sorted[i-1].client === v.client;
+              if (!memeGroupe) g = { achat: 0, vente: 0, benef: 0, reste: 0 };
+              const paye = Number(v.montant_paye ?? v.total_vente ?? 0);
+              const resteDu = Math.round((Number(v.total_vente || 0) - paye) * 100) / 100;
+              if (!v.annulee) {
+                g.achat += Number(v.total_achat || 0); g.vente += Number(v.total_vente || 0);
+                g.benef += Number(v.benefice || 0); g.reste += Math.max(0, resteDu);
+              }
+              out.push(`
             <tr style="${v.annulee ? 'opacity:.45;' : ''}${memeGroupe ? 'border-top:none;' : ''}">
               <td>${memeGroupe ? '' : fmtDate(v.date)}</td>
               <td>${memeGroupe ? '' : (esc(v.client) || '—')}</td>
@@ -190,8 +198,22 @@ function _tplVentes() {
                   <button class="btn btn-ghost btn-sm" onclick="ouvrirCorrigerVente('${v.id}')">Corriger</button>
                   <button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}
               </td>
-            </tr>`;
-          }).join('') : `<tr><td colspan="9"><div class="empty">Aucune vente</div></td></tr>`}
+            </tr>`);
+              const dernierDuGroupe = i === sorted.length - 1 || sorted[i+1].date !== v.date || sorted[i+1].client !== v.client;
+              if (dernierDuGroupe) {
+                out.push(`
+            <tr style="border-top:none;background:var(--card2);font-weight:600;">
+              <td colspan="4" style="text-align:right;">Total commande</td>
+              <td>${fmtEUR(g.achat)}</td>
+              <td>${fmtEUR(g.vente)}</td>
+              <td style="color:${g.benef>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(g.benef)}</td>
+              <td style="color:${g.reste>0.01?'var(--red)':'inherit'}">${g.reste>0.01 ? fmtEUR(g.reste) : '—'}</td>
+              <td></td>
+            </tr>`);
+              }
+            });
+            return out.join('');
+          })() : `<tr><td colspan="9"><div class="empty">Aucune vente</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
