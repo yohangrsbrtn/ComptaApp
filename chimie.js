@@ -5,19 +5,21 @@ let _chFournisseur = [];
 let _chFournisseurRecues = [];
 let _chClients = [];
 let _chVentes = [];
+let _chEncaissements = [];
 let _chDepenseMois = 0;
 
 async function renderChimie() {
   const { debut, fin } = _moisDateRange(moisActuel());
-  const [prod, four, cli, ven, recuesMois, recuesRecent] = await Promise.all([
+  const [prod, four, cli, ven, enc, recuesMois, recuesRecent] = await Promise.all([
     sbSelect('compta_produits', 'select=*&order=nom.asc'),
     sbSelect('compta_commandes_fournisseur', 'select=*&recue=eq.false&order=date_commande.desc,created_at.desc'),
     sbSelect('compta_commandes_clients', 'select=*&order=created_at.desc'),
     sbSelect('compta_ventes', 'select=*&order=date.desc&limit=300'),
+    sbSelect('compta_ventes_encaissements', 'select=*&order=created_at.desc&limit=500'),
     sbSelect('compta_commandes_fournisseur', `recue=eq.true&date_reception=gte.${debut}&date_reception=lt.${fin}`),
     sbSelect('compta_commandes_fournisseur', 'select=*&recue=eq.true&order=date_reception.desc&limit=30'),
   ]);
-  _chProduits = prod; _chFournisseur = four; _chClients = cli; _chVentes = ven;
+  _chProduits = prod; _chFournisseur = four; _chClients = cli; _chVentes = ven; _chEncaissements = enc;
   _chFournisseurRecues = recuesRecent;
   _chDepenseMois = recuesMois.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0);
 
@@ -139,12 +141,15 @@ function _chBenefTri(col) {
 // ── VENTES ───────────────────────────────────────────────────────────
 let _chVentesSearch = '';
 
+function _groupeKey(client, date) { return `${client || ''}|${date}`; }
+
 function _tplVentes() {
   const actives = _chVentes.filter(v => !v.annulee);
   const totalAchat = actives.reduce((s, v) => s + Number(v.total_achat || 0), 0);
   const totalVente = actives.reduce((s, v) => s + Number(v.total_vente || 0), 0);
   const benef = totalVente - totalAchat;
-  const resteAEncaisser = actives.reduce((s, v) => s + Math.max(0, Number(v.total_vente || 0) - Number(v.montant_paye ?? v.total_vente ?? 0)), 0);
+  const totalEncaisse = _chEncaissements.reduce((s, e) => s + Number(e.montant || 0), 0);
+  const resteAEncaisser = Math.max(0, totalVente - totalEncaisse);
 
   const term = _chVentesSearch.toLowerCase();
   const filtered = _chVentes.filter(v => !term || (v.client || '').toLowerCase().includes(term));
@@ -166,76 +171,103 @@ function _tplVentes() {
     <div class="toolbar"><div class="search"><input placeholder="Rechercher un client…" value="${esc(_chVentesSearch)}" oninput="_chVentesSearch=this.value;renderChimie()"></div></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th>Reste dû</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th></th></tr></thead>
         <tbody>
           ${sorted.length ? (() => {
             const out = [];
-            let g = { achat: 0, vente: 0, benef: 0, reste: 0 };
+            let g = { achat: 0, vente: 0, benef: 0, client: null, date: null };
             sorted.forEach((v, i) => {
               const memeGroupe = i > 0 && sorted[i-1].date === v.date && sorted[i-1].client === v.client;
-              if (!memeGroupe) g = { achat: 0, vente: 0, benef: 0, reste: 0 };
-              const paye = Number(v.montant_paye ?? v.total_vente ?? 0);
-              const resteDu = Math.round((Number(v.total_vente || 0) - paye) * 100) / 100;
+              if (!memeGroupe) g = { achat: 0, vente: 0, benef: 0, client: v.client, date: v.date };
               if (!v.annulee) {
                 g.achat += Number(v.total_achat || 0); g.vente += Number(v.total_vente || 0);
-                g.benef += Number(v.benefice || 0); g.reste += Math.max(0, resteDu);
+                g.benef += Number(v.benefice || 0);
               }
               out.push(`
             <tr style="${v.annulee ? 'opacity:.45;' : ''}${memeGroupe ? 'border-top:none;' : ''}">
               <td>${memeGroupe ? '' : fmtDate(v.date)}</td>
               <td>${memeGroupe ? '' : (esc(v.client) || '—')}</td>
-              <td>${esc(v.produit_nom)}${v.marque ? `<div class="page-sub">${esc(v.marque)}</div>` : ''}</td>
-              <td>${v.quantite}</td>
+              <td>${v.frais_ligne ? '<i>Frais / majoration</i>' : esc(v.produit_nom)}${v.marque ? `<div class="page-sub">${esc(v.marque)}</div>` : ''}</td>
+              <td>${v.frais_ligne ? '—' : v.quantite}</td>
               <td>${fmtEUR(v.total_achat)}</td>
               <td>${fmtEUR(v.total_vente)}</td>
               <td style="color:${v.benefice>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(v.benefice)}</td>
-              <td id="vente-reste-${v.id}" style="color:${resteDu>0.01?'var(--red)':'inherit'}">${!v.annulee && resteDu>0.01 ? fmtEUR(resteDu) : '—'}</td>
               <td>
                 ${v.annulee ? `
                   <span class="badge badge-muted">Annulée</span>
                   <button class="btn btn-ghost btn-sm" onclick="reactiverVente('${v.id}')">Réactiver</button>` : `
-                  ${resteDu>0.01 ? `<button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde('${v.id}')">Encaisser</button>` : ''}
                   <button class="btn btn-ghost btn-sm" onclick="ouvrirCorrigerVente('${v.id}')">Corriger</button>
                   <button class="btn btn-ghost btn-sm" onclick="annulerVente('${v.id}')">Annuler</button>`}
               </td>
             </tr>`);
               const dernierDuGroupe = i === sorted.length - 1 || sorted[i+1].date !== v.date || sorted[i+1].client !== v.client;
               if (dernierDuGroupe) {
+                const encGroupe = _chEncaissements.filter(e => e.client === g.client && e.date_vente === g.date);
+                encGroupe.forEach(e => {
+                  out.push(`
+            <tr style="border-top:none;">
+              <td></td><td></td>
+              <td style="color:var(--accent2);">↳ Encaissement du ${fmtDate(e.date_encaissement)}</td>
+              <td>—</td><td>—</td>
+              <td style="color:var(--accent2);">${fmtEUR(e.montant)}</td>
+              <td>—</td>
+              <td><button class="btn btn-ghost btn-sm" onclick="supprimerEncaissement('${e.id}')">Suppr.</button></td>
+            </tr>`);
+                });
+                const totalEnc = encGroupe.reduce((s, e) => s + Number(e.montant || 0), 0);
+                const resteDu = Math.round((g.vente - totalEnc) * 100) / 100;
                 out.push(`
             <tr style="border-top:none;background:var(--card2);font-weight:600;">
-              <td colspan="4" style="text-align:right;">Total commande</td>
+              <td colspan="4" style="text-align:right;">Total commande — encaissé ${fmtEUR(totalEnc)}</td>
               <td>${fmtEUR(g.achat)}</td>
               <td>${fmtEUR(g.vente)}</td>
               <td style="color:${g.benef>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(g.benef)}</td>
-              <td style="color:${g.reste>0.01?'var(--red)':'inherit'}">${g.reste>0.01 ? fmtEUR(g.reste) : '—'}</td>
-              <td></td>
+              <td>
+                ${resteDu>0.01 ? `<span style="color:var(--red);">Reste dû ${fmtEUR(resteDu)}</span> <button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)}, ${resteDu})">Encaisser</button>` : '<span class="badge badge-ok">Soldé</span>'}
+                <button class="btn btn-ghost btn-sm" onclick='supprimerCommandeVente(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)})'>Supprimer</button>
+              </td>
             </tr>`);
               }
             });
             return out.join('');
-          })() : `<tr><td colspan="9"><div class="empty">Aucune vente</div></td></tr>`}
+          })() : `<tr><td colspan="8"><div class="empty">Aucune vente</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
 }
 
-function ouvrirEncaisserSolde(id) {
-  const v = _chVentes.find(x => x.id === id);
-  if (!v) return;
-  const resteDu = Math.round((Number(v.total_vente || 0) - Number(v.montant_paye ?? 0)) * 100) / 100;
+function ouvrirEncaisserSolde(client, dateVente, resteDu) {
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
-    <h3>Encaisser le solde — ${esc(v.client) || 'Sans client'}</h3>
-    <div class="page-sub" style="margin-bottom:14px;">${esc(v.produit_nom)} — reste dû : <b>${fmtEUR(resteDu)}</b></div>
+    <h3>Encaisser — ${esc(client) || 'Sans client'}</h3>
+    <div class="page-sub" style="margin-bottom:14px;">Commande du ${fmtDate(dateVente)} — reste dû : <b>${fmtEUR(resteDu)}</b></div>
     <div class="field"><label>Montant encaissé maintenant (€)</label><input id="es-montant" type="number" step="0.01" value="${resteDu.toFixed(2)}"></div>
+    <div class="page-sub">S'il ne te donne qu'une partie, entre juste ce montant — le reste restera affiché comme dû.</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
-      <button class="btn btn-primary" onclick="confirmerEncaisserSolde('${id}')">Valider</button>
+      <button class="btn btn-primary" onclick='confirmerEncaisserSolde(${JSON.stringify(client)}, ${JSON.stringify(dateVente)})'>Valider</button>
     </div>
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+}
+
+async function confirmerEncaisserSolde(client, dateVente) {
+  const montant = parseFloat(document.getElementById('es-montant').value) || 0;
+  if (montant <= 0) return;
+  try {
+    await sbInsert('compta_ventes_encaissements', { client, date_vente: dateVente, montant, date_encaissement: new Date().toISOString().slice(0, 10) });
+    document.querySelector('.modal-bg')?.remove();
+    toast('Encaissement enregistré', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function supprimerEncaissement(id) {
+  if (!confirm('Supprimer cet encaissement ?')) return;
+  try { await sbDelete('compta_ventes_encaissements', id); toast('Encaissement supprimé', 'ok'); await renderChimie(); }
+  catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function ouvrirCorrigerVente(id) {
@@ -245,9 +277,8 @@ function ouvrirCorrigerVente(id) {
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
     <h3>Corriger — ${esc(v.client) || 'Sans client'}</h3>
-    <div class="page-sub" style="margin-bottom:14px;">${esc(v.produit_nom)}</div>
+    <div class="page-sub" style="margin-bottom:14px;">${v.frais_ligne ? 'Frais / majoration' : esc(v.produit_nom)}</div>
     <div class="field"><label>Total facturé (€)</label><input id="cv-total" type="number" step="0.01" value="${Number(v.total_vente || 0).toFixed(2)}"></div>
-    <div class="field"><label>Payé (€)</label><input id="cv-paye" type="number" step="0.01" value="${Number(v.montant_paye ?? v.total_vente ?? 0).toFixed(2)}"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick="confirmerCorrigerVente('${id}')">Enregistrer</button>
@@ -261,27 +292,12 @@ async function confirmerCorrigerVente(id) {
   const v = _chVentes.find(x => x.id === id);
   if (!v) return;
   const total = parseFloat(document.getElementById('cv-total').value) || 0;
-  const paye = Math.min(parseFloat(document.getElementById('cv-paye').value) || 0, total);
   const benefice = Math.round((total - Number(v.total_achat || 0)) * 100) / 100;
   try {
-    await sbUpdate('compta_ventes', id, { total_vente: total, montant_paye: paye, benefice });
-    v.total_vente = total; v.montant_paye = paye; v.benefice = benefice;
+    await sbUpdate('compta_ventes', id, { total_vente: total, benefice });
+    v.total_vente = total; v.benefice = benefice;
     document.querySelector('.modal-bg')?.remove();
     toast('Vente corrigée', 'ok');
-    await renderChimie();
-  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
-}
-
-async function confirmerEncaisserSolde(id) {
-  const v = _chVentes.find(x => x.id === id);
-  if (!v) return;
-  const montant = parseFloat(document.getElementById('es-montant').value) || 0;
-  const nouveauPaye = Math.min(Number(v.total_vente || 0), Number(v.montant_paye || 0) + montant);
-  try {
-    await sbUpdate('compta_ventes', id, { montant_paye: nouveauPaye });
-    v.montant_paye = nouveauPaye;
-    document.querySelector('.modal-bg')?.remove();
-    toast('Encaissement enregistré', 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
@@ -316,8 +332,27 @@ async function reactiverVente(id) {
   try {
     await sbUpdate('compta_ventes', id, { annulee: false });
     const p = _chProduits.find(x => x.nom === v.produit_nom);
-    if (p) await sbUpdate('compta_produits', p.id, { stock_reel: Number(p.stock_reel || 0) - Number(v.quantite || 0) });
-    toast('Vente réactivée — utilise "Corriger" pour ajuster total/payé', 'ok');
+    if (p && !v.frais_ligne) await sbUpdate('compta_produits', p.id, { stock_reel: Number(p.stock_reel || 0) - Number(v.quantite || 0) });
+    toast('Vente réactivée — utilise "Corriger" pour ajuster le montant si besoin', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function supprimerCommandeVente(client, dateVente) {
+  const lignes = _chVentes.filter(v => v.client === client && v.date === dateVente);
+  if (!lignes.length) return;
+  if (!confirm(`Supprimer définitivement la commande de ${client} du ${fmtDate(dateVente)} (${lignes.length} ligne(s)) et ses encaissements ? Cette action est irréversible.`)) return;
+  try {
+    for (const v of lignes) {
+      if (!v.annulee && !v.frais_ligne) {
+        const p = _chProduits.find(x => x.nom === v.produit_nom);
+        if (p) await sbUpdate('compta_produits', p.id, { stock_reel: Number(p.stock_reel || 0) + Number(v.quantite || 0) });
+      }
+      await sbDelete('compta_ventes', v.id);
+    }
+    const encGroupe = _chEncaissements.filter(e => e.client === client && e.date_vente === dateVente);
+    for (const e of encGroupe) await sbDelete('compta_ventes_encaissements', e.id);
+    toast('Commande supprimée', 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
@@ -978,7 +1013,10 @@ function _tplClients() {
             <div style="font-weight:700;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>${esc(cl)}</div>
             <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" title="Ajouter une ligne pour ce client" onclick='openCmdClientModal(${JSON.stringify(cl)})'>+</button>
           </div>
-          <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick='supprimerBlocCmdClient(${JSON.stringify(cl)})'>Supprimer le bloc</button>
+            <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
+          </div>
         </div>
         <table>
           <thead><tr><th>Produit</th><th>Qté</th><th>PU vente</th><th>Total</th><th></th></tr></thead>
@@ -1091,6 +1129,17 @@ async function deleteCmdClient(id) {
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
+async function supprimerBlocCmdClient(client) {
+  const lignes = _chClients.filter(c => c.client === client);
+  if (!lignes.length) return;
+  if (!confirm(`Supprimer les ${lignes.length} ligne(s) de commande de ${client} ?`)) return;
+  try {
+    for (const l of lignes) await sbDelete('compta_commandes_clients', l.id);
+    toast('Bloc supprimé', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
 async function ajusterQteCmdClient(id, delta) {
   const l = _chClients.find(c => c.id === id);
   if (!l) return;
@@ -1178,7 +1227,6 @@ function _vcSyncPaye() {
 async function confirmerValidationClient(client, totalBrut) {
   const montantReel = parseFloat(document.getElementById('vc-montant').value) || totalBrut;
   const montantPaye = Math.min(parseFloat(document.getElementById('vc-paye').value) || 0, montantReel);
-  const ratioPaye = montantReel > 0 ? montantPaye / montantReel : 1;
   const fraisMontant = Math.round((montantReel - totalBrut) * 100) / 100;
   const lignes = _chClients.filter(c => c.client === client);
   const today = new Date().toISOString().slice(0, 10);
@@ -1189,13 +1237,11 @@ async function confirmerValidationClient(client, totalBrut) {
       const prixAchat = produit?.prix_achat || 0;
       const totalAchat = Math.round(prixAchat * l.quantite * 100) / 100;
       const totalVente = Math.round(l.prix_vente_unitaire * l.quantite * 100) / 100;
-      const montantPayeLigne = Math.round(totalVente * ratioPaye * 100) / 100;
 
       await sbInsert('compta_ventes', {
         date: today, client, produit_nom: l.produit_nom, marque: l.marque,
         quantite: l.quantite, prix_achat_unitaire: prixAchat, prix_vente_unitaire: l.prix_vente_unitaire,
         total_achat: totalAchat, total_vente: totalVente, benefice: Math.round((totalVente - totalAchat) * 100) / 100,
-        montant_paye: montantPayeLigne,
       });
 
       if (produit) await sbUpdate('compta_produits', produit.id, { stock_reel: Number(produit.stock_reel || 0) - Number(l.quantite || 0) });
@@ -1203,13 +1249,15 @@ async function confirmerValidationClient(client, totalBrut) {
     }
 
     if (Math.abs(fraisMontant) > 0.005) {
-      const montantPayeFrais = Math.round(fraisMontant * ratioPaye * 100) / 100;
       await sbInsert('compta_ventes', {
         date: today, client, produit_nom: "Frais d'envoi / majoration", marque: null,
         quantite: 1, prix_achat_unitaire: 0, prix_vente_unitaire: fraisMontant,
-        total_achat: 0, total_vente: fraisMontant, benefice: fraisMontant,
-        montant_paye: montantPayeFrais, frais_ligne: true,
+        total_achat: 0, total_vente: fraisMontant, benefice: fraisMontant, frais_ligne: true,
       });
+    }
+
+    if (montantPaye > 0.005) {
+      await sbInsert('compta_ventes_encaissements', { client, date_vente: today, montant: montantPaye, date_encaissement: today });
     }
 
     document.querySelector('.modal-bg')?.remove();
