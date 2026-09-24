@@ -893,7 +893,8 @@ function ouvrirReceptionModal(id, lotIds) {
     <h3>${titre}</h3>
     <div class="page-sub" style="margin-bottom:14px;">${sousTitre}</div>
     <div class="field"><label>Date de réception</label><input id="rc-date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div class="page-sub" style="margin-bottom:10px;">Détermine dans quel mois cette dépense et ce stock sont comptabilisés. Même date appliquée à toute la sélection.</div>
+    <div class="field"><label>Payé avec (Banque / Espèces)</label><select id="rc-banque"><option value="">— choisir —</option>${BANQUES.map(b => `<option>${b}</option>`).join('')}</select></div>
+    <div class="page-sub" style="margin-bottom:10px;">Détermine dans quel mois cette dépense et ce stock sont comptabilisés, et de quel solde l'argent sort. Même date et même compte appliqués à toute la sélection.</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick='receptionnerCommandes(${JSON.stringify(ids)})'>Confirmer la réception</button>
@@ -905,6 +906,8 @@ function ouvrirReceptionModal(id, lotIds) {
 
 async function receptionnerCommandes(ids) {
   const dateReception = document.getElementById('rc-date')?.value || new Date().toISOString().slice(0, 10);
+  const banque = document.getElementById('rc-banque')?.value;
+  if (!banque) { toast('Choisis avec quel compte tu as payé', 'err'); return; }
   try {
     for (const id of ids) {
       const c = _chFournisseur.find(x => x.id === id);
@@ -922,7 +925,7 @@ async function receptionnerCommandes(ids) {
       }
       // Réception = statut réel de la dépense (pas la commande) : le stock ET la dépense
       // mensuelle ne bougent qu'ici, jamais à la simple création de la commande.
-      await sbUpdate('compta_commandes_fournisseur', id, { recue: true, statut: 'recue', date_reception: dateReception });
+      await sbUpdate('compta_commandes_fournisseur', id, { recue: true, statut: 'recue', date_reception: dateReception, banque, recue_at: new Date().toISOString() });
     }
     document.querySelector('.modal-bg')?.remove();
     toast(`${ids.length} commande(s) réceptionnée(s), stock mis à jour`, 'ok');

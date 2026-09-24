@@ -18,7 +18,7 @@ let _buLignes = [];
 let _buTreso = null;
 let _buModeles = [];
 let _buSort = { col: 'date', dir: 'desc' };
-let _buAuto = { coachingDistance: 0, coachingSeance: 0, chimie: 0, addict: 0, achatsFournisseur: 0 };
+let _buAuto = { coachingDistance: 0, coachingSeance: 0, chimie: 0, addict: 0, achatsFournisseur: 0, achatsChimie: 0 };
 let _buSoldes = [];
 
 function _moisDateRange(mois) {
@@ -90,12 +90,16 @@ async function _calculerActuelleMois(mois, annee) {
   const coaching = paiements.reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
   const chimie = ventes.reduce((s, v) => s + (Number(v.total_vente || 0) - Number(v.total_achat || 0)), 0);
   const addictB = addict.reduce((s, a) => s + (Number(a.vente || 0) - Number(a.achat || 0)), 0);
-  const achatsFournisseur = achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0)
-    + achatsAddict.reduce((s, a) => s + Number(a.quantite || 0) * Number(a.prix_achat_unitaire || 0), 0);
+  const achatsFournisseur = achatsAddict.reduce((s, a) => s + Number(a.quantite || 0) * Number(a.prix_achat_unitaire || 0), 0);
   const resultat = (coaching + chimie + addictB + sumType('revenu')) - sumType('depense_fixe') - (achatsFournisseur + sumType('depense_variable')) - sumType('epargne') - sumType('credit');
   const theorique = Number(treso[0]?.depart || 0) + resultat;
   const aPointage = soldesGroupes['Banque'] || soldesGroupes['Espèces'];
-  return aPointage ? (soldesGroupes['Banque']?.solde || 0) + (soldesGroupes['Espèces']?.solde || 0) : theorique;
+  return aPointage ? (soldesGroupes['Banque']?.solde || 0) + (soldesGroupes['Espèces']?.solde || 0) + await _valeurStockChimie() : theorique;
+}
+
+async function _valeurStockChimie() {
+  const prods = await sbSelect('compta_produits', 'select=stock_reel,prix_achat');
+  return prods.reduce((s, p) => s + Number(p.stock_reel || 0) * Number(p.prix_achat || 0), 0);
 }
 
 const _idxMois = (m, a) => a * 100 + MOIS.indexOf(m);
@@ -110,12 +114,17 @@ const _appartientAuGroupeSolde = (banque, groupe) => groupe === 'Espèces' ? ban
 // signalé par le coach) : on compare l'horodatage de création de la ligne à celui du
 // pointage (updated_at), pas juste le mois affiché sur la ligne.
 async function _calculerSoldesGroupes(moisCible, anneeCible) {
-  const [soldes, paiementsAnnee, lignesAnnee, encAnnee] = await Promise.all([
+  const [soldes, paiementsAnnee, lignesAnnee, encAnnee, achatsAnnee] = await Promise.all([
     sbSelect('compta_soldes_bancaires', 'select=*'),
     sbSelect('compta_paiements', `select=mois,annee,banque,mt_suivi,mt_seance,created_at&annee=eq.${anneeCible}`),
     sbSelect('compta_budget_lignes', `select=mois,annee,banque,type,montant,created_at&annee=eq.${anneeCible}`),
     sbSelect('compta_ventes_encaissements', `select=banque,montant,date_encaissement,created_at&banque=not.is.null&date_encaissement=gte.${anneeCible}-01-01&date_encaissement=lte.${anneeCible}-12-31`),
+    sbSelect('compta_commandes_fournisseur', `select=banque,quantite,prix_achat_unitaire,date_reception,recue_at,created_at&recue=eq.true&banque=not.is.null&date_reception=gte.${anneeCible}-01-01&date_reception=lte.${anneeCible}-12-31`),
   ]);
+  const achatsMois = achatsAnnee.map(a => {
+    const d = new Date(a.date_reception);
+    return { banque: a.banque, montant: Number(a.quantite || 0) * Number(a.prix_achat_unitaire || 0), mois: MOIS[d.getMonth()], annee: d.getFullYear(), created_at: a.recue_at || a.created_at };
+  });
   const encMois = encAnnee.map(e => {
     const d = new Date(e.date_encaissement);
     return { banque: e.banque, montant: e.montant, mois: MOIS[d.getMonth()], annee: d.getFullYear(), created_at: e.created_at };
@@ -140,6 +149,9 @@ async function _calculerSoldesGroupes(moisCible, anneeCible) {
     solde += encMois
       .filter(e => _appartientAuGroupeSolde(e.banque, g) && apresChk(e))
       .reduce((s, e) => s + Number(e.montant || 0), 0);
+    solde -= achatsMois
+      .filter(a => _appartientAuGroupeSolde(a.banque, g) && apresChk(a))
+      .reduce((s, a) => s + a.montant, 0);
     solde += lignesAnnee
       .filter(l => _appartientAuGroupeSolde(l.banque, g) && apresChk(l))
       .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);
@@ -196,9 +208,10 @@ async function renderBudget() {
     coachingSeance: paiements.reduce((s, p) => s + Number(p.mt_seance || 0), 0),
     chimie: ventes.reduce((s, v) => s + (Number(v.total_vente || 0) - Number(v.total_achat || 0)), 0),
     addict: addict.reduce((s, a) => s + (Number(a.vente || 0) - Number(a.achat || 0)), 0),
-    achatsFournisseur: achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0)
-      + achatsAddict.reduce((s, a) => s + Number(a.quantite || 0) * Number(a.prix_achat_unitaire || 0), 0),
+    achatsFournisseur: achatsAddict.reduce((s, a) => s + Number(a.quantite || 0) * Number(a.prix_achat_unitaire || 0), 0),
+    achatsChimie: achats.reduce((s, c) => s + Number(c.quantite || 0) * Number(c.prix_achat_unitaire || 0), 0),
   };
+  const stockChimie = await _valeurStockChimie();
   const totalAutoRevenu = _buAuto.coachingDistance + _buAuto.coachingSeance + _buAuto.chimie + _buAuto.addict;
 
   const totRevenu = totalAutoRevenu + sum('revenu'), totFixe = sum('depense_fixe'), totVar = _buAuto.achatsFournisseur + sum('depense_variable'), totEparg = sum('epargne'), totCredit = sum('credit');
@@ -210,7 +223,7 @@ async function renderBudget() {
   const depart = Number(_buTreso?.depart || 0);
   const actuelleTheorique = depart + resultat;
   const aUnPointage = soldesCalcules['Banque'] || soldesCalcules['Espèces'];
-  const actuelleReelle = aUnPointage ? (soldesCalcules['Banque']?.solde || 0) + (soldesCalcules['Espèces']?.solde || 0) : null;
+  const actuelleReelle = aUnPointage ? (soldesCalcules['Banque']?.solde || 0) + (soldesCalcules['Espèces']?.solde || 0) + stockChimie : null;
   const ecartTresorerie = actuelleReelle !== null ? actuelleReelle - actuelleTheorique : null;
 
   // Répartition par catégorie (mois affiché) : revenus d'un côté, dépenses fixes+variables
@@ -225,7 +238,7 @@ async function renderBudget() {
 
   const depenseItemsBruts = [
     ..._agregerParCategorie(['depense_fixe', 'depense_variable']),
-    ...(_buAuto.achatsFournisseur > 0 ? [{ label: 'Achats stock (Chimie/Addict)', montant: _buAuto.achatsFournisseur }] : []),
+    ...(_buAuto.achatsFournisseur > 0 ? [{ label: 'Achats stock (Addict)', montant: _buAuto.achatsFournisseur }] : []),
   ].filter(i => i.montant > 0).sort((a, b) => b.montant - a.montant);
   const depenseItems = _fusionnerPetites(depenseItemsBruts, 6);
 
@@ -287,7 +300,7 @@ async function renderBudget() {
       </div>
       <div class="page-sub" style="margin-top:8px;">
         ${actuelleReelle !== null
-          ? `Réelle, d'après le pointage banque/espèces · Théorique (départ + résultat) : ${fmtEUR(actuelleTheorique)}${ecartTresorerie !== null && Math.abs(ecartTresorerie) >= 1 ? ` · <span style="color:var(--gold);">écart ${ecartTresorerie>=0?'+':''}${fmtEUR(ecartTresorerie)}</span>` : ''}`
+          ? `Réelle : banque + espèces + stock chimie (${fmtEUR(stockChimie)}) · Théorique (départ + résultat) : ${fmtEUR(actuelleTheorique)}${ecartTresorerie !== null && Math.abs(ecartTresorerie) >= 1 ? ` · <span style="color:var(--gold);">écart ${ecartTresorerie>=0?'+':''}${fmtEUR(ecartTresorerie)}</span>` : ''}`
           : `Estimée (départ + résultat du mois) — pointe tes soldes Banque/Espèces ci-dessous pour avoir la vraie valeur.`}
       </div>
       <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="saveTresorerie()">Enregistrer départ/prévue</button>
@@ -309,6 +322,11 @@ async function renderBudget() {
                 <td><button class="btn btn-ghost btn-sm" onclick='ouvrirSoldeBanque(${JSON.stringify(g)})'>Mettre à jour</button></td>
               </tr>`;
             }).join('')}
+            <tr>
+              <td><b>Chimie (stock)</b></td>
+              <td>${fmtEUR(stockChimie)}</td>
+              <td class="page-sub" colspan="2">Valeur du stock à l'achat — se met à jour toute seule</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -354,7 +372,8 @@ async function renderBudget() {
       <table>
         <thead><tr><th>Catégorie</th><th>Source</th><th>Montant</th></tr></thead>
         <tbody>
-          <tr><td><b>Achats fournisseur (Chimie + Addict)</b></td><td><span class="badge badge-blue">Auto · Réceptions</span></td><td>${fmtEUR(_buAuto.achatsFournisseur)}</td></tr>
+          <tr><td><b>Achats fournisseur (Addict)</b></td><td><span class="badge badge-blue">Auto · Réceptions</span></td><td>${fmtEUR(_buAuto.achatsFournisseur)}</td></tr>
+          <tr><td><b>Achats stock Chimie</b></td><td><span class="badge badge-muted">Hors résultat · va dans le stock</span></td><td>${fmtEUR(_buAuto.achatsChimie)}</td></tr>
         </tbody>
       </table>
     </div>
