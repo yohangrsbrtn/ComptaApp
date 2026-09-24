@@ -110,11 +110,16 @@ const _appartientAuGroupeSolde = (banque, groupe) => groupe === 'Espèces' ? ban
 // signalé par le coach) : on compare l'horodatage de création de la ligne à celui du
 // pointage (updated_at), pas juste le mois affiché sur la ligne.
 async function _calculerSoldesGroupes(moisCible, anneeCible) {
-  const [soldes, paiementsAnnee, lignesAnnee] = await Promise.all([
+  const [soldes, paiementsAnnee, lignesAnnee, encAnnee] = await Promise.all([
     sbSelect('compta_soldes_bancaires', 'select=*'),
     sbSelect('compta_paiements', `select=mois,annee,banque,mt_suivi,mt_seance,created_at&annee=eq.${anneeCible}`),
     sbSelect('compta_budget_lignes', `select=mois,annee,banque,type,montant,created_at&annee=eq.${anneeCible}`),
+    sbSelect('compta_ventes_encaissements', `select=banque,montant,date_encaissement,created_at&banque=not.is.null&date_encaissement=gte.${anneeCible}-01-01&date_encaissement=lte.${anneeCible}-12-31`),
   ]);
+  const encMois = encAnnee.map(e => {
+    const d = new Date(e.date_encaissement);
+    return { banque: e.banque, montant: e.montant, mois: MOIS[d.getMonth()], annee: d.getFullYear(), created_at: e.created_at };
+  });
   const idxAffiche = _idxMois(moisCible, anneeCible);
   const resultat = {};
   SOLDE_GROUPES.forEach(g => {
@@ -132,6 +137,9 @@ async function _calculerSoldesGroupes(moisCible, anneeCible) {
     solde += paiementsAnnee
       .filter(p => _appartientAuGroupeSolde(p.banque, g) && apresChk(p))
       .reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
+    solde += encMois
+      .filter(e => _appartientAuGroupeSolde(e.banque, g) && apresChk(e))
+      .reduce((s, e) => s + Number(e.montant || 0), 0);
     solde += lignesAnnee
       .filter(l => _appartientAuGroupeSolde(l.banque, g) && apresChk(l))
       .reduce((s, l) => s + (l.type === 'revenu' ? Number(l.montant || 0) : -Number(l.montant || 0)), 0);

@@ -207,7 +207,7 @@ function _tplVentes() {
                   out.push(`
             <tr style="border-top:none;">
               <td></td><td></td>
-              <td style="color:var(--accent2);">↳ Encaissement du ${fmtDate(e.date_encaissement)}</td>
+              <td style="color:var(--accent2);">↳ Encaissement du ${fmtDate(e.date_encaissement)}${e.banque ? ` · ${esc(e.banque)}` : ''}</td>
               <td>—</td><td>—</td>
               <td style="color:var(--accent2);">${fmtEUR(e.montant)}</td>
               <td>—</td>
@@ -223,7 +223,7 @@ function _tplVentes() {
               <td>${fmtEUR(g.vente)}</td>
               <td style="color:${g.benef>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(g.benef)}</td>
               <td>
-                ${resteDu>0.01 ? `<span style="color:var(--red);">Reste dû ${fmtEUR(resteDu)}</span> <button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)}, ${resteDu})">Encaisser</button>` : '<span class="badge badge-ok">Soldé</span>'}
+                ${resteDu>0.01 ? `<span style="color:var(--red);">Reste dû ${fmtEUR(resteDu)}</span> <button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)}, ${resteDu})">Encaisser</button>` : '<span class="badge badge-green">Soldé</span>'}
                 <button class="btn btn-ghost btn-sm" onclick='supprimerCommandeVente(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)})'>Supprimer</button>
               </td>
             </tr>`);
@@ -243,6 +243,7 @@ function ouvrirEncaisserSolde(client, dateVente, resteDu) {
     <h3>Encaisser — ${esc(client) || 'Sans client'}</h3>
     <div class="page-sub" style="margin-bottom:14px;">Commande du ${fmtDate(dateVente)} — reste dû : <b>${fmtEUR(resteDu)}</b></div>
     <div class="field"><label>Montant encaissé maintenant (€)</label><input id="es-montant" type="number" step="0.01" value="${resteDu.toFixed(2)}"></div>
+    <div class="field"><label>Encaissé sur (Banque / Espèces)</label><select id="es-banque"><option value="">— choisir —</option>${BANQUES.map(b => `<option>${b}</option>`).join('')}</select></div>
     <div class="page-sub">S'il ne te donne qu'une partie, entre juste ce montant — le reste restera affiché comme dû.</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
@@ -255,9 +256,11 @@ function ouvrirEncaisserSolde(client, dateVente, resteDu) {
 
 async function confirmerEncaisserSolde(client, dateVente) {
   const montant = parseFloat(document.getElementById('es-montant').value) || 0;
+  const banque = document.getElementById('es-banque').value;
   if (montant <= 0) return;
+  if (!banque) { toast('Choisis Banque ou Espèces', 'err'); return; }
   try {
-    await sbInsert('compta_ventes_encaissements', { client, date_vente: dateVente, montant, date_encaissement: new Date().toISOString().slice(0, 10) });
+    await sbInsert('compta_ventes_encaissements', { client, date_vente: dateVente, montant, date_encaissement: new Date().toISOString().slice(0, 10), banque });
     document.querySelector('.modal-bg')?.remove();
     toast('Encaissement enregistré', 'ok');
     await renderChimie();
@@ -1202,6 +1205,7 @@ function ouvrirValidationClient(client) {
     <div class="field"><label>Frais d'envoi / majoration (%)</label><input id="vc-remise" type="number" step="0.1" value="${frais}" oninput="_vcRecalc(${totalBrut})"></div>
     <div class="field"><label>Total facturé (€)</label><input id="vc-montant" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}" oninput="_vcSyncPaye()"></div>
     <div class="field"><label>Payé maintenant (€) — laisse en dessous du total si le client règle en plusieurs fois</label><input id="vc-paye" type="number" step="0.01" value="${totalAvecFrais.toFixed(2)}" oninput="_vcPayeTouched=true"></div>
+    <div class="field"><label>Encaissé sur (Banque / Espèces)</label><select id="vc-banque"><option value="">— choisir —</option>${BANQUES.map(b => `<option>${b}</option>`).join('')}</select></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick='confirmerValidationClient(${JSON.stringify(client)}, ${totalBrut})'>Valider</button>
@@ -1228,6 +1232,8 @@ async function confirmerValidationClient(client, totalBrut) {
   const montantReel = parseFloat(document.getElementById('vc-montant').value) || totalBrut;
   const montantPaye = Math.min(parseFloat(document.getElementById('vc-paye').value) || 0, montantReel);
   const fraisMontant = Math.round((montantReel - totalBrut) * 100) / 100;
+  const banque = document.getElementById('vc-banque').value;
+  if (montantPaye > 0.005 && !banque) { toast('Choisis Banque ou Espèces pour le montant encaissé', 'err'); return; }
   const lignes = _chClients.filter(c => c.client === client);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -1257,7 +1263,7 @@ async function confirmerValidationClient(client, totalBrut) {
     }
 
     if (montantPaye > 0.005) {
-      await sbInsert('compta_ventes_encaissements', { client, date_vente: today, montant: montantPaye, date_encaissement: today });
+      await sbInsert('compta_ventes_encaissements', { client, date_vente: today, montant: montantPaye, date_encaissement: today, banque });
     }
 
     document.querySelector('.modal-bg')?.remove();
