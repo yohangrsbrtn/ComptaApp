@@ -391,7 +391,7 @@ function _tplStock() {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th>Dernier inventaire</th><th></th></tr></thead>
+        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th>Réservé clients</th><th>Dispo</th><th>Dernier inventaire</th><th></th></tr></thead>
         <tbody>
           ${sorted.length ? sorted.map(p => `
             <tr>
@@ -407,9 +407,11 @@ function _tplStock() {
                   <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', 1)">+</button>
                 </div>
               </td>
+              <td>${_ccReserve(p) || '—'}</td>
+              <td id="stock-dispo-${p.id}" style="font-weight:700;color:${Number(p.stock_reel||0) - _ccReserve(p) < 0 ? 'var(--red)' : 'inherit'};">${Number(p.stock_reel||0) - _ccReserve(p)}</td>
               <td class="page-sub">${p.dernier_inventaire ? fmtDate(p.dernier_inventaire) : '<span style="color:var(--red);">Jamais</span>'}</td>
               <td><button class="btn btn-ghost btn-sm" onclick="openProduitModal('${p.id}')">Éditer</button></td>
-            </tr>`).join('') : `<tr><td colspan="8"><div class="empty">Aucun produit</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="10"><div class="empty">Aucun produit</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
@@ -498,12 +500,22 @@ async function modifierStockProduit(id, valeur) {
     // sinon, trié par la colonne Stock, la ligne changerait de place à chaque clic.
     const input = document.getElementById(`stock-input-${id}`);
     if (input) input.value = nouveauStock;
+    const dispoEl = document.getElementById(`stock-dispo-${id}`);
+    if (dispoEl) {
+      const dispo = nouveauStock - _ccReserve(p);
+      dispoEl.textContent = dispo;
+      dispoEl.style.color = dispo < 0 ? 'var(--red)' : 'inherit';
+    }
     const totalAchat = _chProduits.reduce((s, x) => s + Number(x.stock_reel || 0) * Number(x.prix_achat || 0), 0);
     const totalVente = _chProduits.reduce((s, x) => s + Number(x.stock_reel || 0) * Number(x.prix_vente || 0), 0);
     document.getElementById('stock-total-achat').textContent = fmtEUR(totalAchat);
     document.getElementById('stock-total-vente').textContent = fmtEUR(totalVente);
     document.getElementById('stock-total-benef').textContent = fmtEUR(totalVente - totalAchat);
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+function _ccReserve(p) {
+  return _chClients.filter(c => c.produit_id ? c.produit_id === p.id : c.produit_nom === p.nom).reduce((s, c) => s + Number(c.quantite || 0), 0);
 }
 
 function _chStockTri(col) {
