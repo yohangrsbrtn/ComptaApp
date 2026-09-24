@@ -1088,12 +1088,12 @@ function openCmdClientModal(clientPrefill, editId) {
     <div class="field"><label>Client</label><input id="cc-client" value="${esc(editLigne?.client || clientPrefill || '')}"></div>
     <div class="field"><label>Produit</label>
       <select id="cc-produit" onchange="_ccAutofill()">
-        ${_chProduits.map(p => `<option value="${p.id}" data-marque="${esc(p.marque)}" data-vente="${p.prix_vente||''}" ${editLigne && editLigne.produit_id===p.id ? 'selected' : ''}>${esc(p.nom)}</option>`).join('')}
+        ${_chProduits.map(p => `<option value="${p.id}" data-marque="${esc(p.marque)}" data-vente="${p.prix_vente||''}" data-achat="${p.prix_achat||''}" ${editLigne && editLigne.produit_id===p.id ? 'selected' : ''}>${esc(p.nom)}</option>`).join('')}
       </select>
     </div>
     <div class="row2">
       <div class="field"><label>Quantité</label><input id="cc-qte" type="number" value="${editLigne?.quantite ?? 1}"></div>
-      <div class="field"><label>Prix vente unit.</label><input id="cc-prix" type="number" step="0.01" value="${editLigne?.prix_vente_unitaire ?? 0}"></div>
+      <div class="field"><label>Prix vente unit. <a href="#" style="color:var(--accent2);margin-left:8px;" onclick="event.preventDefault();_ccPrixCoutant()">Prix coûtant</a></label><input id="cc-prix" type="number" step="0.01" value="${editLigne?.prix_vente_unitaire ?? 0}"></div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove();renderChimie()">${editLigne ? 'Annuler' : 'Terminé'}</button>
@@ -1105,6 +1105,11 @@ function openCmdClientModal(clientPrefill, editId) {
   bg.addEventListener('click', e => { if (e.target === bg) { bg.remove(); renderChimie(); } });
   document.body.appendChild(bg);
   if (!editLigne) _ccAutofill();
+}
+
+function _ccPrixCoutant() {
+  const opt = document.getElementById('cc-produit').selectedOptions[0];
+  if (opt) document.getElementById('cc-prix').value = opt.dataset.achat || 0;
 }
 
 function _ccAutofill() {
