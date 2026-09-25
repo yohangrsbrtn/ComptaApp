@@ -1032,6 +1032,7 @@ function _tplClients() {
             <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" title="Ajouter une ligne pour ce client" onclick='openCmdClientModal(${JSON.stringify(cl)})'>+</button>
           </div>
           <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick='blocPrixCoutant(${JSON.stringify(cl)})'>Tout au prix coûtant</button>
             <button class="btn btn-ghost btn-sm" onclick='supprimerBlocCmdClient(${JSON.stringify(cl)})'>Supprimer le bloc</button>
             <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
           </div>
@@ -1150,6 +1151,19 @@ async function saveCmdClient(editId) {
 async function deleteCmdClient(id) {
   try { await sbDelete('compta_commandes_clients', id); await renderChimie(); }
   catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+async function blocPrixCoutant(client) {
+  const lignes = _chClients.filter(c => c.client === client);
+  if (!lignes.length || !confirm(`Passer toutes les lignes de ${client} au prix d'achat (prix coûtant) ?`)) return;
+  try {
+    for (const l of lignes) {
+      const p = l.produit_id ? _chProduits.find(x => x.id === l.produit_id) : _chProduits.find(x => x.nom === l.produit_nom);
+      if (p && p.prix_achat != null) await sbUpdate('compta_commandes_clients', l.id, { prix_vente_unitaire: Number(p.prix_achat) });
+    }
+    toast('Prix coûtant appliqué', 'ok');
+    await renderChimie();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 async function supprimerBlocCmdClient(client) {
