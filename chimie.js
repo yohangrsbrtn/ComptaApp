@@ -1087,6 +1087,7 @@ function openCmdClientModal(clientPrefill, editId) {
   bg.innerHTML = `<div class="modal" data-edit-id="${editId || ''}">
     <h3>${editLigne ? 'Modifier la ligne' : 'Nouvelle ligne'} — Commande client</h3>
     <div class="field"><label>Client</label><input id="cc-client" value="${esc(editLigne?.client || clientPrefill || '')}"></div>
+    ${editLigne ? '' : `<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:-6px 0 14px;color:var(--muted);"><input type="checkbox" id="cc-separe"> Commande séparée (ne pas ajouter au bloc existant de ce client)</label>`}
     <div class="field"><label>Produit</label>
       <select id="cc-produit" onchange="_ccAutofill()">
         ${_chProduits.map(p => `<option value="${p.id}" data-marque="${esc(p.marque)}" data-vente="${p.prix_vente||''}" data-achat="${p.prix_achat||''}" ${editLigne && editLigne.produit_id===p.id ? 'selected' : ''}>${esc(p.nom)}</option>`).join('')}
@@ -1120,8 +1121,17 @@ function _ccAutofill() {
 
 async function saveCmdClient(editId) {
   const opt = document.getElementById('cc-produit').selectedOptions[0];
-  const client = document.getElementById('cc-client').value.trim();
+  let client = document.getElementById('cc-client').value.trim();
   if (!client || !opt) { toast('Client et produit requis', 'err'); return; }
+  const separe = document.getElementById('cc-separe');
+  if (!editId && separe?.checked && _chClients.some(c => c.client === client)) {
+    const base = client.replace(/ \(\d+\)$/, '');
+    let n = 2;
+    while (_chClients.some(c => c.client === `${base} (${n})`)) n++;
+    client = `${base} (${n})`;
+    document.getElementById('cc-client').value = client;
+    separe.checked = false;
+  }
   const fraisExistant = _chClients.find(c => c.client === client)?.frais_pct || 0;
   const body = {
     client,
