@@ -156,7 +156,7 @@ async function lancerGenerationFactures() {
         adresse: client?.adresse || '', dateEnvoi, dateEcheance, modePaiement, lignes, montantTotal,
       });
 
-      const path = `${numero}_${(client ? client.nom : sel.nom).replace(/\s+/g, '_')}.pdf`;
+      const path = `${numero}_${(client ? client.nom : sel.nom).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_')}.pdf`;
       await sbUpload('factures', path, pdfBlob);
 
       await sbInsert('compta_factures', {
