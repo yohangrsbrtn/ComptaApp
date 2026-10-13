@@ -610,7 +610,11 @@ function _tplFournisseur() {
   const besoinsListe = Object.values(besoins).map(b => {
     const produit = b.produitId ? _chProduits.find(p => p.id === b.produitId) : _chProduits.find(p => p.nom === b.nom);
     const stock = Number(produit?.stock_reel || 0);
-    return { ...b, stock, aCommander: Math.max(0, b.demande - stock) };
+    const enCommande = _chFournisseur
+      .filter(l => !l.est_frais && (b.produitId ? l.produit_id === b.produitId : l.produit_nom === b.nom))
+      .reduce((s, l) => s + Number(l.quantite || 0), 0);
+    const brut = Math.max(0, b.demande - stock);
+    return { ...b, stock, enCommande, aCommanderBrut: brut, aCommander: Math.max(0, brut - enCommande) };
   }).sort((a, b) => (a.nom || '').localeCompare(b.nom || ''));
 
   return `
@@ -623,10 +627,10 @@ function _tplFournisseur() {
     ${besoinsListe.length ? `
     <div class="card" style="margin-bottom:16px;">
       <div style="font-weight:700;margin-bottom:4px;">Besoins clients en attente</div>
-      <div class="page-sub" style="margin-bottom:12px;">Ce que tes commandes clients en cours demandent, comparé à ton stock réel — "À commander" tient déjà compte de ce que tu as en stock.</div>
+      <div class="page-sub" style="margin-bottom:12px;">Ce que tes commandes clients en cours demandent, comparé à ton stock réel — "À commander" tient déjà compte de ton stock et de tes commandes fournisseur à passer / en cours.</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Produit</th><th>Marque</th><th>Demandé par clients</th><th>En stock</th><th>À commander</th><th></th></tr></thead>
+          <thead><tr><th>Produit</th><th>Marque</th><th>Demandé par clients</th><th>En stock</th><th>En commande</th><th>À commander</th><th></th></tr></thead>
           <tbody>
             ${besoinsListe.map(b => `
               <tr>
@@ -634,7 +638,8 @@ function _tplFournisseur() {
                 <td>${esc(b.marque) || '—'}</td>
                 <td>${b.demande}</td>
                 <td>${b.stock}</td>
-                <td>${b.aCommander > 0 ? `<span class="badge badge-gold">${b.aCommander}</span>` : '<span class="badge badge-green">0 — couvert par le stock</span>'}</td>
+                <td>${b.enCommande || '—'}</td>
+                <td>${b.aCommander > 0 ? `<span class="badge badge-gold">${b.aCommander}</span>` : b.aCommanderBrut > 0 ? '<span class="badge badge-blue">Couvert par la commande</span>' : '<span class="badge badge-green">0 — couvert par le stock</span>'}</td>
                 <td>${b.aCommander > 0 ? `<button class="btn btn-ghost btn-sm" onclick='commanderBesoinClient(${JSON.stringify(b.produitId)}, ${JSON.stringify(b.nom)}, ${b.aCommander})'>Commander</button>` : ''}</td>
               </tr>`).join('')}
           </tbody>
