@@ -144,12 +144,10 @@ function _rvLireCsv(texte) {
   return lignes;
 }
 
-function parseReleveCsv(texte) {
-  const lignes = _rvLireCsv(texte.replace(/^﻿/, ''));
+function _rvCsvSumeria(lignes) {
   const per = lignes.map(l => (l[1] || '').match(/Du\s*(\d\d)\/(\d\d)\/(\d{4})/)).find(Boolean);
   const mois = per ? Number(per[2]) - 1 : null, annee = per ? Number(per[3]) : new Date().getFullYear();
   const idxEntete = lignes.findIndex(l => /Description et identifiant/i.test(l.join(',')));
-  if (idxEntete < 0) return null;
   const ops = [];
   lignes.slice(idxEntete + 1).forEach(l => {
     const dateOp = (l[1] || '').match(/^(\d\d)\/(\d\d)$/);
@@ -168,13 +166,44 @@ function parseReleveCsv(texte) {
   return { banque: 'Sumeria', mois, annee, ops };
 }
 
+function _rvCsvRevolut(lignes) {
+  const entete = lignes[0].map(x => x.trim());
+  const col = nom => entete.findIndex(x => x === nom);
+  const iDate = col('Date de début'), iDesc = col('Description'), iMt = col('Montant'), iFrais = col('Frais'), iDev = col('Devise'), iEtat = col('État');
+  const ops = [];
+  lignes.slice(1).forEach(l => {
+    const d = (l[iDate] || '').match(/^(\d{4})-(\d\d)-(\d\d)/);
+    if (!d || (iDev >= 0 && l[iDev] !== 'EUR') || (iEtat >= 0 && !/TERMIN/i.test(l[iEtat] || ''))) return;
+    const net = parseFloat(l[iMt]) - (parseFloat(l[iFrais]) || 0);
+    if (isNaN(net) || net === 0) return;
+    ops.push({
+      section: 'compte', type: l[0], jour: Number(d[3]), mois: Number(d[2]), annee: Number(d[1]),
+      label: (l[iDesc] || '').replace(/\s+/g, ' ').trim(), details: [], montant: Math.abs(net), sens: net < 0 ? 'debit' : 'credit',
+      date: `${d[1]}-${d[2]}-${d[3]}`,
+    });
+  });
+  const compte = {};
+  ops.forEach(o => { const k = `${o.annee}-${o.mois}`; compte[k] = (compte[k] || 0) + 1; });
+  const dominant = Object.keys(compte).sort((a, b) => compte[b] - compte[a])[0];
+  const [annee, moisNum] = dominant ? dominant.split('-').map(Number) : [new Date().getFullYear(), 1];
+  return { banque: 'Revolut', mois: moisNum - 1, annee, ops };
+}
+
+function parseReleveCsv(texte) {
+  const lignes = _rvLireCsv(texte.replace(/^\uFEFF/, '')).filter(l => l.length > 1 || l[0]);
+  const tete = lignes.map(l => l.join(',')).join('\n');
+  if (/Description et identifiant/i.test(tete)) return _rvCsvSumeria(lignes);
+  if (lignes[0] && /Date de début/i.test(lignes[0].join(',')) && /Produit/i.test(lignes[0].join(','))) return _rvCsvRevolut(lignes);
+  return null;
+}
+
 // ── Rapprochement avec les lignes du Budget ──────────────────────────
 const _RV_GENERIQUES = ['autre', 'perso', 'fixe', 'frais', 'paiement', 'virement'];
 const _RV_ALIAS = [
   [/france travail|pole emploi/, 'are chomage'],
   [/aksport|fitness/, 'sport fitness salle'],
-  [/bitstack/, 'bitstack crypto bitcoin epargne'],
-  [/carrefour|leclerc|auchan|lidl|intermarche|monoprix|casino|franprix/, 'alimentation courses carrefour'],
+  [/bitstack|payward|kraken|digital assets/, 'bitstack crypto bitcoin epargne'],
+  [/carrefour|leclerc|auchan|lidl|intermarche|monoprix|casino|franprix|eroski/, 'alimentation courses carrefour'],
   [/paypal/, 'paypal'],
   [/mutuelle/, 'mutuelle sante'],
   [/gmf/, 'gmf assurance'],
@@ -238,8 +267,8 @@ function _rvProposer(ops, lignes, banque) {
 
 function _rvDevinerCategorie(op) {
   const t = _rvNorm(op.label);
-  if (/bitstack/.test(t)) return { type: 'epargne', cat: 'Epargne crypto' };
-  if (/carrefour|leclerc|auchan|lidl|intermarche|monoprix|casino|franprix/.test(t)) return { type: 'depense_variable', cat: 'Alimentation' };
+  if (/bitstack|payward|kraken|digital assets/.test(t)) return { type: 'epargne', cat: 'Epargne crypto' };
+  if (/carrefour|leclerc|auchan|lidl|intermarche|monoprix|casino|franprix|eroski/.test(t)) return { type: 'depense_variable', cat: 'Alimentation' };
   return { type: 'depense_variable', cat: 'Perso' };
 }
 
@@ -250,7 +279,7 @@ function ouvrirRapprochementReleve() {
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
     <h3>Rapprocher un relevé bancaire</h3>
-    <div class="page-sub" style="margin-bottom:12px;">Choisis le relevé (PDF Crédit Agricole ou Qonto, CSV Sumeria). Il est lu dans ton navigateur, il n'est envoyé nulle part. Rien n'est modifié avant que tu valides la liste.</div>
+    <div class="page-sub" style="margin-bottom:12px;">Choisis le relevé (PDF Crédit Agricole ou Qonto, CSV Sumeria ou Revolut). Il est lu dans ton navigateur, il n'est envoyé nulle part. Rien n'est modifié avant que tu valides la liste.</div>
     <div class="field"><input id="rv-file" type="file" accept=".pdf,.csv,application/pdf,text/csv" onchange="_rvAnalyser(this.files[0])"></div>
     <div id="rv-statut" class="page-sub"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Fermer</button></div>
@@ -289,7 +318,7 @@ async function _rvAnalyser(file) {
       pages.push({ items: tc.items.map(i => ({ s: i.str, x: Math.round(i.transform[4] * 10) / 10, y: Math.round(i.transform[5]), w: i.width })) });
     }
     const releve = parseReleve(pages);
-    if (!releve) { statut.textContent = "Banque non reconnue pour l'instant (Crédit Agricole, Qonto et Sumeria sont gérés)."; return; }
+    if (!releve) { statut.textContent = "Banque non reconnue pour l'instant (Crédit Agricole, Qonto, Sumeria et Revolut sont gérés)."; return; }
     if (!releve.ops.length) { statut.textContent = 'Aucune opération trouvée dans ce PDF.'; return; }
     _rvAfficherRevue(releve);
   } catch (e) { statut.textContent = 'Erreur : ' + e.message; }
