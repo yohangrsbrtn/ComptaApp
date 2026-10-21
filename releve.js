@@ -123,6 +123,51 @@ function parseReleve(pages) {
   return null;
 }
 
+// ── CSV (Sumeria) ────────────────────────────────────────────────────
+function _rvLireCsv(texte) {
+  const lignes = [];
+  let champ = '', ligne = [], guillemets = false;
+  for (let i = 0; i < texte.length; i++) {
+    const c = texte[i];
+    if (guillemets) {
+      if (c === '"' && texte[i + 1] === '"') { champ += '"'; i++; }
+      else if (c === '"') guillemets = false;
+      else champ += c;
+    } else if (c === '"') guillemets = true;
+    else if (c === ',') { ligne.push(champ); champ = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && texte[i + 1] === '\n') i++;
+      ligne.push(champ); champ = ''; lignes.push(ligne); ligne = [];
+    } else champ += c;
+  }
+  if (champ || ligne.length) { ligne.push(champ); lignes.push(ligne); }
+  return lignes;
+}
+
+function parseReleveCsv(texte) {
+  const lignes = _rvLireCsv(texte.replace(/^﻿/, ''));
+  const per = lignes.map(l => (l[1] || '').match(/Du\s*(\d\d)\/(\d\d)\/(\d{4})/)).find(Boolean);
+  const mois = per ? Number(per[2]) - 1 : null, annee = per ? Number(per[3]) : new Date().getFullYear();
+  const idxEntete = lignes.findIndex(l => /Description et identifiant/i.test(l.join(',')));
+  if (idxEntete < 0) return null;
+  const ops = [];
+  lignes.slice(idxEntete + 1).forEach(l => {
+    const dateOp = (l[1] || '').match(/^(\d\d)\/(\d\d)$/);
+    if (!dateOp) return;
+    const debit = parseFloat((l[3] || '').replace(',', '.')), credit = parseFloat((l[4] || '').replace(',', '.'));
+    const montant = !isNaN(debit) ? debit : credit;
+    if (isNaN(montant) || montant <= 0) return;
+    const mm = Number(dateOp[2]), jj = Number(dateOp[1]);
+    const desc = (l[2] || '').split('\n').map(x => x.trim()).filter(Boolean);
+    ops.push({
+      section: 'compte', type: '', jour: jj, mois: mm, annee: mm - 1 > mois ? annee - 1 : annee,
+      label: desc[0] || '', details: desc.slice(1).filter(x => !/^Réf\./.test(x)), montant, sens: !isNaN(debit) ? 'debit' : 'credit',
+      date: `${mm - 1 > mois ? annee - 1 : annee}-${String(mm).padStart(2, '0')}-${String(jj).padStart(2, '0')}`,
+    });
+  });
+  return { banque: 'Sumeria', mois, annee, ops };
+}
+
 // ── Rapprochement avec les lignes du Budget ──────────────────────────
 const _RV_GENERIQUES = ['autre', 'perso', 'fixe', 'frais', 'paiement', 'virement'];
 const _RV_ALIAS = [
@@ -139,6 +184,7 @@ const _RV_ALIAS = [
   [/totalenergies|total energies/, 'total elec electricite energie'],
   [/cotisation carte|offre compte/, 'banque carte compte'],
   [/allianz/, 'assurance allianz'],
+  [/amazon/, 'amazon achat'],
   [/supabase|openai|chatgpt|google one|github|vercel/, 'abonnement logiciel outil pro'],
   [/^qonto|abonnement \/ frais/, 'banque qonto frais'],
   [/amazon prime/, 'amazon prime abonnement'],
@@ -204,8 +250,8 @@ function ouvrirRapprochementReleve() {
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
     <h3>Rapprocher un relevé bancaire</h3>
-    <div class="page-sub" style="margin-bottom:12px;">Choisis le PDF du relevé. Il est lu dans ton navigateur, il n'est envoyé nulle part. Rien n'est modifié avant que tu valides la liste.</div>
-    <div class="field"><input id="rv-file" type="file" accept="application/pdf" onchange="_rvAnalyser(this.files[0])"></div>
+    <div class="page-sub" style="margin-bottom:12px;">Choisis le relevé (PDF Crédit Agricole ou Qonto, CSV Sumeria). Il est lu dans ton navigateur, il n'est envoyé nulle part. Rien n'est modifié avant que tu valides la liste.</div>
+    <div class="field"><input id="rv-file" type="file" accept=".pdf,.csv,application/pdf,text/csv" onchange="_rvAnalyser(this.files[0])"></div>
     <div id="rv-statut" class="page-sub"></div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Fermer</button></div>
   </div>`;
@@ -229,6 +275,12 @@ async function _rvAnalyser(file) {
   const statut = document.getElementById('rv-statut');
   statut.textContent = 'Lecture du relevé…';
   try {
+    if (/\.csv$/i.test(file.name)) {
+      const releveCsv = parseReleveCsv(await file.text());
+      if (!releveCsv || !releveCsv.ops.length) { statut.textContent = 'Aucune opération trouvée dans ce CSV.'; return; }
+      _rvAfficherRevue(releveCsv);
+      return;
+    }
     await _rvChargerPdfJs();
     const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
     const pages = [];
@@ -237,7 +289,7 @@ async function _rvAnalyser(file) {
       pages.push({ items: tc.items.map(i => ({ s: i.str, x: Math.round(i.transform[4] * 10) / 10, y: Math.round(i.transform[5]), w: i.width })) });
     }
     const releve = parseReleve(pages);
-    if (!releve) { statut.textContent = "Banque non reconnue pour l'instant (Crédit Agricole et Qonto sont gérés)."; return; }
+    if (!releve) { statut.textContent = "Banque non reconnue pour l'instant (Crédit Agricole, Qonto et Sumeria sont gérés)."; return; }
     if (!releve.ops.length) { statut.textContent = 'Aucune opération trouvée dans ce PDF.'; return; }
     _rvAfficherRevue(releve);
   } catch (e) { statut.textContent = 'Erreur : ' + e.message; }
@@ -340,4 +392,4 @@ async function _rvAppliquer() {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-if (typeof module !== 'undefined') module.exports = { parseReleveCA, parseReleveQonto, parseReleve, _rvProposer };
+if (typeof module !== 'undefined') module.exports = { parseReleveCA, parseReleveQonto, parseReleve, parseReleveCsv, _rvProposer };
