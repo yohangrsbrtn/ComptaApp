@@ -50,7 +50,7 @@ function parseReleveCA(pages) {
     }
   }
   return {
-    mois: arreteMois, annee: arreteAnnee,
+    banque: 'Crédit Agricole', mois: arreteMois, annee: arreteAnnee,
     ops: ops.filter(o => o.montant != null && o.montant > 0).map(o => ({ ...o, date: `${o.annee}-${String(o.mois).padStart(2, '0')}-${String(o.jour).padStart(2, '0')}` })),
   };
 }
@@ -60,6 +60,68 @@ function _rvAffecterMontant(op, item) {
   op.sens = item.x < 480 ? 'debit' : 'credit';
 }
 
+
+
+// ── Qonto : le PDF découpe le texte caractère par caractère, on le recolle via la largeur ──
+function _rvCellules(items) {
+  const tries = items.filter(i => i.s.trim()).sort((a, b) => a.x - b.x);
+  const cellules = [];
+  tries.forEach(i => {
+    const der = cellules[cellules.length - 1];
+    const finDer = der ? der.fin : null;
+    if (der && i.x - finDer <= 12) {
+      der.text += (i.x - finDer > 1.2 ? ' ' : '') + i.s;
+      der.fin = i.x + (i.w || 0);
+    } else cellules.push({ text: i.s, x: i.x, fin: i.x + (i.w || 0) });
+  });
+  return cellules;
+}
+
+function parseReleveQonto(pages) {
+  const ops = [];
+  let periodeMois = null, periodeAnnee = null, courante = null;
+  for (const page of pages) {
+    const rows = {};
+    page.items.filter(i => i.s.trim()).forEach(i => { (rows[i.y] = rows[i.y] || []).push(i); });
+    for (const y of Object.keys(rows).map(Number).sort((a, b) => b - a)) {
+      const cells = _rvCellules(rows[y]);
+      const texte = cells.map(c => c.text).join(' ');
+      const per = texte.match(/Du\s*(\d\d)\/(\d\d)\/(\d{4})\s*au/);
+      if (per) { periodeMois = Number(per[2]) - 1; periodeAnnee = Number(per[3]); continue; }
+      const premier = cells[0];
+      if (/^\d\d\/\d\d$/.test(premier.text) && premier.x < 100) {
+        const [jj, mm] = premier.text.split('/').map(Number);
+        const montantCell = cells.find(c => c.x > 380 && /^[+-]\s*[\d\s]+\.\d{2}\s*(EUR|USD)$/.test(c.text));
+        const label = cells.filter(c => c.x >= 100 && c.x < 380).map(c => c.text).join(' ').trim();
+        courante = { section: 'compte', type: '', jour: jj, mois: mm, annee: periodeAnnee || new Date().getFullYear(), label, details: [], montant: null, sens: null };
+        ops.push(courante);
+        if (montantCell) _rvMontantQonto(courante, montantCell.text);
+      } else if (courante) {
+        const montantCell = cells.find(c => c.x > 380 && /^[+-]\s*[\d\s]+\.\d{2}\s*(EUR|USD)$/.test(c.text));
+        if (montantCell && courante.montant == null) _rvMontantQonto(courante, montantCell.text);
+        else if (!montantCell && cells[0].x >= 100 && cells[0].x < 380 && courante.details.length < 3) courante.details.push(cells.map(c => c.text).join(' '));
+      }
+    }
+  }
+  return {
+    banque: 'Qonto', mois: periodeMois, annee: periodeAnnee,
+    ops: ops.filter(o => o.montant != null && o.montant > 0).map(o => ({ ...o, date: `${o.annee}-${String(o.mois).padStart(2, '0')}-${String(o.jour).padStart(2, '0')}` })),
+  };
+}
+
+function _rvMontantQonto(op, texte) {
+  const m = texte.match(/^([+-])\s*([\d\s]+\.\d{2})\s*(EUR|USD)$/);
+  if (!m || m[3] !== 'EUR') return;
+  op.montant = Number(m[2].replace(/\s/g, ''));
+  op.sens = m[1] === '-' ? 'debit' : 'credit';
+}
+
+function parseReleve(pages) {
+  const texte = pages.flatMap(p => p.items.map(i => i.s)).join('');
+  if (/CREDITAGRICOLE|CRÉDITAGRICOLE/i.test(texte.replace(/\s/g, ''))) return parseReleveCA(pages);
+  if (/Qonto/i.test(texte) && /Datedevaleur/i.test(texte.replace(/\s/g, ''))) return parseReleveQonto(pages);
+  return null;
+}
 
 // ── Rapprochement avec les lignes du Budget ──────────────────────────
 const _RV_GENERIQUES = ['autre', 'perso', 'fixe', 'frais', 'paiement', 'virement'];
@@ -76,6 +138,10 @@ const _RV_ALIAS = [
   [/bouygues/, 'bouygues telephone forfait mobile internet'],
   [/totalenergies|total energies/, 'total elec electricite energie'],
   [/cotisation carte|offre compte/, 'banque carte compte'],
+  [/allianz/, 'assurance allianz'],
+  [/supabase|openai|chatgpt|google one|github|vercel/, 'abonnement logiciel outil pro'],
+  [/^qonto|abonnement \/ frais/, 'banque qonto frais'],
+  [/amazon prime/, 'amazon prime abonnement'],
 ];
 
 function _rvTokens(texte) {
@@ -88,9 +154,9 @@ function _rvTexteOp(op) {
   return t;
 }
 
-function _rvProposer(ops, lignes) {
+function _rvProposer(ops, lignes, banque) {
   const typesDebit = ['depense_fixe', 'depense_variable', 'credit', 'epargne'];
-  const ok = l => !l.banque || l.banque === 'Crédit Agricole';
+  const ok = l => !l.banque || l.banque === banque;
   const paires = [];
   ops.forEach((op, oi) => {
     const texte = _rvTexteOp(op);
@@ -137,7 +203,7 @@ function ouvrirRapprochementReleve() {
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
-    <h3>Rapprocher un relevé Crédit Agricole</h3>
+    <h3>Rapprocher un relevé bancaire</h3>
     <div class="page-sub" style="margin-bottom:12px;">Choisis le PDF du relevé. Il est lu dans ton navigateur, il n'est envoyé nulle part. Rien n'est modifié avant que tu valides la liste.</div>
     <div class="field"><input id="rv-file" type="file" accept="application/pdf" onchange="_rvAnalyser(this.files[0])"></div>
     <div id="rv-statut" class="page-sub"></div>
@@ -168,10 +234,11 @@ async function _rvAnalyser(file) {
     const pages = [];
     for (let p = 1; p <= doc.numPages; p++) {
       const tc = await (await doc.getPage(p)).getTextContent();
-      pages.push({ items: tc.items.map(i => ({ s: i.str, x: Math.round(i.transform[4]), y: Math.round(i.transform[5]) })) });
+      pages.push({ items: tc.items.map(i => ({ s: i.str, x: Math.round(i.transform[4] * 10) / 10, y: Math.round(i.transform[5]), w: i.width })) });
     }
-    const releve = parseReleveCA(pages);
-    if (!releve.ops.length) { statut.textContent = 'Aucune opération trouvée — est-ce bien un relevé Crédit Agricole ?'; return; }
+    const releve = parseReleve(pages);
+    if (!releve) { statut.textContent = "Banque non reconnue pour l'instant (Crédit Agricole et Qonto sont gérés)."; return; }
+    if (!releve.ops.length) { statut.textContent = 'Aucune opération trouvée dans ce PDF.'; return; }
     _rvAfficherRevue(releve);
   } catch (e) { statut.textContent = 'Erreur : ' + e.message; }
 }
@@ -183,18 +250,18 @@ function _rvAfficherRevue(releve) {
     if (o.section === 'compte' && /^D[ée]penses Carte/i.test(o.label)) return;
     if (o.mois - 1 !== releve.mois) horsMois.push(o); else ops.push(o);
   });
-  const prop = _rvProposer(ops, _buLignes);
+  const prop = _rvProposer(ops, _buLignes, releve.banque);
   _rv = { releve, ops, prop, moisReleve };
 
   const libresDebit = prop.opsLibres.filter(o => o.sens === 'debit');
   const libresCredit = prop.opsLibres.filter(o => o.sens === 'credit');
-  const lignesNonVues = prop.lignesLibres.filter(l => ['depense_fixe', 'depense_variable', 'credit', 'epargne'].includes(l.type) && (!l.banque || l.banque === 'Crédit Agricole'));
+  const lignesNonVues = prop.lignesLibres.filter(l => ['depense_fixe', 'depense_variable', 'credit', 'epargne'].includes(l.type) && (!l.banque || l.banque === releve.banque));
   const mauvaisMois = moisReleve !== _buMois;
   const badge = c => `<span class="badge ${c === 'haute' ? 'badge-green' : c === 'moyenne' ? 'badge-gold' : 'badge-red'}">${c}</span>`;
 
   const html = `
     ${mauvaisMois ? `<div class="card" style="border-color:var(--red);margin-bottom:12px;">Ce relevé est celui de <b>${moisReleve}</b> mais le Budget affiché est <b>${_buMois}</b>. Change de mois en haut de la page avant d'appliquer.</div>` : ''}
-    <div class="page-sub" style="margin-bottom:10px;">Relevé de ${moisReleve} ${releve.annee} · ${ops.length} opérations${horsMois.length ? ` · ${horsMois.length} hors du mois (ignorée${horsMois.length > 1 ? 's' : ''})` : ''}</div>
+    <div class="page-sub" style="margin-bottom:10px;">Relevé ${releve.banque} de ${moisReleve} ${releve.annee} · ${ops.length} opérations${horsMois.length ? ` · ${horsMois.length} hors du mois (ignorée${horsMois.length > 1 ? 's' : ''})` : ''}</div>
 
     <div style="font-weight:700;margin:12px 0 6px;">1. Lignes du budget retrouvées sur le relevé (${prop.rapprochements.length})</div>
     <div class="table-wrap"><table>
@@ -240,7 +307,7 @@ function _rvAfficherRevue(releve) {
     </div>`;
   const modal = document.querySelector('.modal-bg .modal');
   modal.style.maxWidth = '1000px';
-  modal.innerHTML = `<h3>Rapprochement — relevé de ${moisReleve}</h3>` + html;
+  modal.innerHTML = `<h3>Rapprochement — ${releve.banque}, ${moisReleve}</h3>` + html;
   _rv.libresDebit = libresDebit;
 }
 
@@ -263,7 +330,7 @@ async function _rvAppliquer() {
       await sbInsert('compta_budget_lignes', {
         mois: _buMois, annee: 2026, type: document.getElementById(`rv-nt-${i}`).value,
         categorie: document.getElementById(`rv-nc-${i}`).value.trim() || 'Perso',
-        banque: 'Crédit Agricole', detail: o.label, montant: o.montant, date: o.date, coche: true,
+        banque: _rv.releve.banque, detail: o.label, montant: o.montant, date: o.date, coche: true,
       });
       crees++;
     }
@@ -273,4 +340,4 @@ async function _rvAppliquer() {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-if (typeof module !== 'undefined') module.exports = { parseReleveCA, _rvProposer };
+if (typeof module !== 'undefined') module.exports = { parseReleveCA, parseReleveQonto, parseReleve, _rvProposer };
