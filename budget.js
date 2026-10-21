@@ -183,6 +183,7 @@ async function renderBudget() {
     await Promise.all(manquantes.map(m => sbInsert('compta_budget_lignes', {
       mois: _buMois, annee: 2026, type: 'depense_fixe', modele_id: m.id,
       categorie: m.categorie, banque: m.banque, detail: m.detail, montant: m.montant, coche: false,
+      date: _buDateJour(m.jour),
     })));
     lignes = await sbSelect('compta_budget_lignes', `mois=eq.${encodeURIComponent(_buMois)}&annee=eq.2026&order=created_at.asc`);
   }
@@ -271,7 +272,10 @@ async function renderBudget() {
   document.getElementById('root').innerHTML = shell(`
     <div class="topbar">
       <div><div class="page-title">Budget mensuel</div><div class="page-sub">${_buMois} 2026</div></div>
-      <button class="btn btn-primary" onclick="${_buType==='depense_fixe' ? 'openDepenseFixeModeleModal()' : 'openLigneModal()'}">+ ${_buType==='depense_fixe' ? 'Dépense fixe récurrente' : 'Ligne'}</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" onclick="ouvrirRapprochementReleve()">Rapprocher un relevé</button>
+        <button class="btn btn-primary" onclick="${_buType==='depense_fixe' ? 'openDepenseFixeModeleModal()' : 'openLigneModal()'}">+ ${_buType==='depense_fixe' ? 'Dépense fixe récurrente' : 'Ligne'}</button>
+      </div>
     </div>
     <div class="toolbar">
       <select onchange="_buMois=this.value;renderBudget()" style="background:var(--card2);color:var(--text);border:1px solid var(--border);padding:9px 12px;border-radius:10px;">
@@ -383,11 +387,12 @@ async function renderBudget() {
     ${_buType === 'depense_fixe' ? `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Payé</th>${th('categorie','Catégorie')}${th('banque','Banque')}${th('detail','Détail')}${th('montant','Montant')}<th></th></tr></thead>
+        <thead><tr><th>Payé</th>${th('date','Date')}${th('categorie','Catégorie')}${th('banque','Banque')}${th('detail','Détail')}${th('montant','Montant')}<th></th></tr></thead>
         <tbody>
           ${rowsType.length ? rowsType.map(l => `
             <tr>
               <td><input type="checkbox" ${l.coche ? 'checked' : ''} onchange="toggleCoche('${l.id}', this.checked)" style="width:18px;height:18px;"></td>
+              <td>${l.date ? fmtDate(l.date) : '—'}</td>
               <td><b>${esc(l.categorie)}</b></td>
               <td>${esc(l.banque) || '—'}</td>
               <td>${esc(l.detail) || '—'}</td>
@@ -396,7 +401,7 @@ async function renderBudget() {
                 <button class="btn btn-ghost btn-sm" onclick="openDepenseFixeModeleModal('${l.modele_id || ''}', '${l.id}')">Éditer</button>
                 <button class="btn btn-ghost btn-sm" onclick="supprimerDepenseFixeModele('${l.modele_id || ''}', '${l.id}')">Suppr.</button>
               </td>
-            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune dépense fixe — clique sur "+ Dépense fixe récurrente"</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucune dépense fixe — clique sur "+ Dépense fixe récurrente"</div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -404,10 +409,11 @@ async function renderBudget() {
     ` : `
     <div class="table-wrap">
       <table>
-        <thead><tr>${th('categorie','Catégorie')}${th('banque','Banque')}${th('detail','Détail')}${th('date','Date')}${th('montant','Montant')}<th></th></tr></thead>
+        <thead><tr><th>Pointé</th>${th('categorie','Catégorie')}${th('banque','Banque')}${th('detail','Détail')}${th('date','Date')}${th('montant','Montant')}<th></th></tr></thead>
         <tbody>
           ${rowsType.length ? rowsType.map(l => `
             <tr>
+              <td><input type="checkbox" ${l.coche ? 'checked' : ''} onchange="toggleCoche('${l.id}', this.checked)" style="width:18px;height:18px;"></td>
               <td><b>${esc(l.categorie)}</b></td>
               <td>${esc(l.banque) || '—'}</td>
               <td>${esc(l.detail) || '—'}</td>
@@ -417,7 +423,7 @@ async function renderBudget() {
                 <button class="btn btn-ghost btn-sm" onclick="openLigneModal('${l.id}')">Éditer</button>
                 <button class="btn btn-ghost btn-sm" onclick="deleteLigne('${l.id}')">Suppr.</button>
               </td>
-            </tr>`).join('') : `<tr><td colspan="6"><div class="empty">Aucune ligne manuelle</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="7"><div class="empty">Aucune ligne manuelle</div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -425,6 +431,13 @@ async function renderBudget() {
   `);
 
   function sum(type) { return lignes.filter(l => l.type === type).reduce((s, l) => s + Number(l.montant || 0), 0); }
+}
+
+function _buDateJour(jour) {
+  if (!jour) return null;
+  const mm = MOIS_NUM[_buMois];
+  const dernier = new Date(2026, Number(mm), 0).getDate();
+  return `2026-${mm}-${String(Math.min(Number(jour), dernier)).padStart(2, '0')}`;
 }
 
 function _buTri(col) {
@@ -451,6 +464,7 @@ function openDepenseFixeModeleModal(modeleId, ligneId) {
       <div class="field"><label>Montant (€)</label><input id="df-montant" type="number" step="0.01" value="${ligne?.montant ?? modele?.montant ?? 0}"></div>
     </div>
     <div class="field"><label>Détail</label><input id="df-detail" value="${esc(ligne?.detail ?? modele?.detail)}" placeholder="ex: Loyer, Total-elec…"></div>
+    <div class="field"><label>Jour du mois où ça tombe (1-31)</label><input id="df-jour" type="number" min="1" max="31" value="${modele?.jour ?? (ligne?.date ? Number(ligne.date.slice(8, 10)) : '')}" placeholder="ex: 3"></div>
     <div class="page-sub" style="margin-bottom:10px;">${modele ? "Modifier le montant/détail ici change ce mois-ci ET les mois suivants (c'est le modèle récurrent)." : "Sera reconduite automatiquement chaque mois à partir de maintenant."}</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
@@ -466,19 +480,20 @@ async function saveDepenseFixeModele(modeleId, ligneId) {
   const banque = document.getElementById('df-banque').value || null;
   const detail = document.getElementById('df-detail').value.trim() || null;
   const montant = parseFloat(document.getElementById('df-montant').value) || 0;
+  const jour = parseInt(document.getElementById('df-jour').value) || null;
   if (!categorie) { toast('Catégorie requise', 'err'); return; }
   try {
     let mid = modeleId;
     if (mid) {
-      await sbUpdate('compta_depenses_fixes_modeles', mid, { categorie, banque, detail, montant });
+      await sbUpdate('compta_depenses_fixes_modeles', mid, { categorie, banque, detail, montant, jour });
     } else {
-      const created = await sbInsert('compta_depenses_fixes_modeles', { categorie, banque, detail, montant, actif: true });
+      const created = await sbInsert('compta_depenses_fixes_modeles', { categorie, banque, detail, montant, actif: true, jour });
       mid = created[0].id;
     }
     if (ligneId) {
-      await sbUpdate('compta_budget_lignes', ligneId, { categorie, banque, detail, montant, modele_id: mid });
+      await sbUpdate('compta_budget_lignes', ligneId, { categorie, banque, detail, montant, modele_id: mid, date: _buDateJour(jour) });
     } else {
-      await sbInsert('compta_budget_lignes', { mois: _buMois, annee: 2026, type: 'depense_fixe', modele_id: mid, categorie, banque, detail, montant, coche: false });
+      await sbInsert('compta_budget_lignes', { mois: _buMois, annee: 2026, type: 'depense_fixe', modele_id: mid, categorie, banque, detail, montant, coche: false, date: _buDateJour(jour) });
     }
     document.querySelector('.modal-bg')?.remove();
     toast('Dépense fixe enregistrée', 'ok');
