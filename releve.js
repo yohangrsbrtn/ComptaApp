@@ -273,6 +273,12 @@ function _rvDevinerCategorie(op) {
 }
 
 let _rv = null;
+let _rvRegles = [];
+
+async function _rvChargerRegles() {
+  try { _rvRegles = (await sbSelect('compta_releve_ignores', 'select=motif')).map(r => r.motif); }
+  catch (e) { _rvRegles = []; }
+}
 
 function ouvrirRapprochementReleve() {
   const bg = document.createElement('div');
@@ -307,6 +313,7 @@ async function _rvAnalyser(file) {
     if (/\.csv$/i.test(file.name)) {
       const releveCsv = parseReleveCsv(await file.text());
       if (!releveCsv || !releveCsv.ops.length) { statut.textContent = 'Aucune opération trouvée dans ce CSV.'; return; }
+      await _rvChargerRegles();
       _rvAfficherRevue(releveCsv);
       return;
     }
@@ -320,16 +327,19 @@ async function _rvAnalyser(file) {
     const releve = parseReleve(pages);
     if (!releve) { statut.textContent = "Banque non reconnue pour l'instant (Crédit Agricole, Qonto, Sumeria et Revolut sont gérés)."; return; }
     if (!releve.ops.length) { statut.textContent = 'Aucune opération trouvée dans ce PDF.'; return; }
+    await _rvChargerRegles();
     _rvAfficherRevue(releve);
   } catch (e) { statut.textContent = 'Erreur : ' + e.message; }
 }
 
 function _rvAfficherRevue(releve) {
   const moisReleve = MOIS[releve.mois];
-  const horsMois = [], ops = [];
+  const horsMois = [], ops = [], ignorees = [];
   releve.ops.forEach(o => {
     if (o.section === 'compte' && /^D[ée]penses Carte/i.test(o.label)) return;
-    if (o.mois - 1 !== releve.mois) horsMois.push(o); else ops.push(o);
+    if (o.mois - 1 !== releve.mois) horsMois.push(o);
+    else if (_rvRegles.some(m => _rvNorm(o.label).includes(m))) ignorees.push(o);
+    else ops.push(o);
   });
   const prop = _rvProposer(ops, _buLignes, releve.banque);
   _rv = { releve, ops, prop, moisReleve };
@@ -342,7 +352,7 @@ function _rvAfficherRevue(releve) {
 
   const html = `
     ${mauvaisMois ? `<div class="card" style="border-color:var(--red);margin-bottom:12px;">Ce relevé est celui de <b>${moisReleve}</b> mais le Budget affiché est <b>${_buMois}</b>. Change de mois en haut de la page avant d'appliquer.</div>` : ''}
-    <div class="page-sub" style="margin-bottom:10px;">Relevé ${releve.banque} de ${moisReleve} ${releve.annee} · ${ops.length} opérations${horsMois.length ? ` · ${horsMois.length} hors du mois (ignorée${horsMois.length > 1 ? 's' : ''})` : ''}</div>
+    <div class="page-sub" style="margin-bottom:10px;">Relevé ${releve.banque} de ${moisReleve} ${releve.annee} · ${ops.length} opérations${horsMois.length ? ` · ${horsMois.length} hors du mois (ignorée${horsMois.length > 1 ? 's' : ''})` : ''}${ignorees.length ? ` · ${ignorees.length} masquée${ignorees.length > 1 ? 's' : ''} par tes règles « ignorer »` : ''}</div>
 
     <div style="font-weight:700;margin:12px 0 6px;">1. Lignes du budget retrouvées sur le relevé (${prop.rapprochements.length})</div>
     <div class="table-wrap"><table>
@@ -362,15 +372,16 @@ function _rvAfficherRevue(releve) {
     <div style="font-weight:700;margin:16px 0 6px;">2. Dépenses du relevé absentes du budget (${libresDebit.length})</div>
     <div class="page-sub" style="margin-bottom:6px;">Coche celles à ajouter. Les virements sortants sont décochés par défaut (à toi de voir si c'est une dépense).</div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Ajouter</th><th>Date</th><th>Opération</th><th>Montant</th><th>Type</th><th>Catégorie</th></tr></thead>
+      <thead><tr><th>Ajouter</th><th>Date</th><th>Opération</th><th>Montant</th><th>Type</th><th>Catégorie</th><th>Ignorer à l'avenir</th></tr></thead>
       <tbody>${libresDebit.map((o, i) => {
         const g = _rvDevinerCategorie(o);
         return `<tr>
           <td><input type="checkbox" id="rv-n-${i}" ${/^vir/i.test(o.label) ? '' : 'checked'} style="width:18px;height:18px;"></td>
           <td>${fmtDate(o.date)}</td><td>${esc(o.label)}</td><td>${fmtEUR(o.montant)}</td>
           <td><select id="rv-nt-${i}">${['depense_variable', 'depense_fixe', 'epargne', 'credit'].map(t => `<option value="${t}" ${t === g.type ? 'selected' : ''}>${TYPE_LABELS[t]}</option>`).join('')}</select></td>
-          <td><input id="rv-nc-${i}" value="${esc(g.cat)}" style="width:130px;"></td></tr>`;
-      }).join('') || `<tr><td colspan="6"><div class="empty">Tout est déjà dans ton budget</div></td></tr>`}</tbody>
+          <td><input id="rv-nc-${i}" value="${esc(g.cat)}" style="width:130px;"></td>
+          <td><input type="checkbox" id="rv-ig-${i}" style="width:18px;height:18px;" onchange="if(this.checked)document.getElementById('rv-n-${i}').checked=false"></td></tr>`;
+      }).join('') || `<tr><td colspan="7"><div class="empty">Tout est déjà dans ton budget</div></td></tr>`}</tbody>
     </table></div>
 
     ${lignesNonVues.length ? `
@@ -394,7 +405,7 @@ function _rvAfficherRevue(releve) {
 
 async function _rvAppliquer() {
   const { prop, libresDebit } = _rv;
-  let pointes = 0, montants = 0, crees = 0;
+  let pointes = 0, montants = 0, crees = 0, regles = 0;
   try {
     for (let i = 0; i < prop.rapprochements.length; i++) {
       if (!document.getElementById(`rv-m-${i}`)?.checked) continue;
@@ -406,8 +417,12 @@ async function _rvAppliquer() {
       pointes++;
     }
     for (let i = 0; i < libresDebit.length; i++) {
-      if (!document.getElementById(`rv-n-${i}`)?.checked) continue;
       const o = libresDebit[i];
+      if (document.getElementById(`rv-ig-${i}`)?.checked) {
+        try { await sbInsert('compta_releve_ignores', { motif: _rvNorm(o.label).trim() }); regles++; } catch (e) { /* déjà présente */ }
+        continue;
+      }
+      if (!document.getElementById(`rv-n-${i}`)?.checked) continue;
       await sbInsert('compta_budget_lignes', {
         mois: _buMois, annee: 2026, type: document.getElementById(`rv-nt-${i}`).value,
         categorie: document.getElementById(`rv-nc-${i}`).value.trim() || 'Perso',
@@ -416,7 +431,7 @@ async function _rvAppliquer() {
       crees++;
     }
     document.querySelector('.modal-bg')?.remove();
-    toast(`${pointes} ligne(s) pointée(s), ${montants} montant(s) corrigé(s), ${crees} ajoutée(s)`, 'ok');
+    toast(`${pointes} ligne(s) pointée(s), ${montants} montant(s) corrigé(s), ${crees} ajoutée(s)${regles ? `, ${regles} opération(s) ignorée(s) à l'avenir` : ''}`, 'ok');
     await renderBudget();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
