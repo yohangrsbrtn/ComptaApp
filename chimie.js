@@ -223,7 +223,7 @@ function _tplVentes() {
               <td>${fmtEUR(g.vente)}</td>
               <td style="color:${g.benef>=0?'var(--accent2)':'var(--red)'}">${fmtEUR(g.benef)}</td>
               <td>
-                ${resteDu>0.01 ? `<span style="color:var(--red);">Reste dû ${fmtEUR(resteDu)}</span> <button class="btn btn-primary btn-sm" onclick="ouvrirEncaisserSolde(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)}, ${resteDu})">Encaisser</button>` : '<span class="badge badge-green">Soldé</span>'}
+                ${resteDu>0.01 ? `<span style="color:var(--red);">Reste dû ${fmtEUR(resteDu)}</span> <button class="btn btn-primary btn-sm" onclick='ouvrirEncaisserSolde(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)}, ${resteDu})'>Encaisser</button>` : '<span class="badge badge-green">Soldé</span>'}
                 <button class="btn btn-ghost btn-sm" onclick='supprimerCommandeVente(${JSON.stringify(g.client)}, ${JSON.stringify(g.date)})'>Supprimer</button>
               </td>
             </tr>`);
