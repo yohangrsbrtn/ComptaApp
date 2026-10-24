@@ -1018,6 +1018,15 @@ async function _ccFraisSauvegarder(cl, val) {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
+async function _ccChampSauvegarder(cl, champ, val) {
+  const lignes = _chClients.filter(c => c.client === cl);
+  try {
+    for (const l of lignes) { await sbUpdate('compta_commandes_clients', l.id, { [champ]: val || null }); l[champ] = val || null; }
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+const _ccDateSauvegarder = (cl, val) => _ccChampSauvegarder(cl, 'date_commande', val);
+const _ccNoteSauvegarder = (cl, val) => _ccChampSauvegarder(cl, 'note', val.trim());
+
 function _tplClients() {
   const parClient = {};
   _chClients.forEach(c => { (parClient[c.client] = parClient[c.client] || []).push(c); });
@@ -1029,6 +1038,8 @@ function _tplClients() {
       const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
       const idSafe = cl.replace(/[^a-zA-Z0-9]/g, '_');
       const frais = Number(lignes[0]?.frais_pct || 0);
+      const dateCmd = lignes.map(l => l.date_commande).find(Boolean) || (lignes[0]?.created_at || '').slice(0, 10);
+      const note = lignes.map(l => l.note).find(Boolean) || '';
       return `
       <div class="card" style="margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -1041,6 +1052,13 @@ function _tplClients() {
             <button class="btn btn-ghost btn-sm" onclick='supprimerBlocCmdClient(${JSON.stringify(cl)})'>Supprimer le bloc</button>
             <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
           </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label class="page-sub" style="margin:0;">Date</label>
+            <input type="date" value="${dateCmd}" onchange='_ccDateSauvegarder(${JSON.stringify(cl)}, this.value)' style="background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;">
+          </div>
+          <textarea rows="1" placeholder="Note sur cette commande…" onchange='_ccNoteSauvegarder(${JSON.stringify(cl)}, this.value)' style="flex:1;min-width:200px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-family:inherit;font-size:14px;resize:vertical;">${esc(note)}</textarea>
         </div>
         <table>
           <thead><tr><th>Produit</th><th>Qté</th><th>PU vente</th><th>Total</th><th></th></tr></thead>
@@ -1137,8 +1155,11 @@ async function saveCmdClient(editId) {
     document.getElementById('cc-client').value = client;
     separe.checked = false;
   }
-  const fraisExistant = _chClients.find(c => c.client === client)?.frais_pct || 0;
+  const blocExistant = _chClients.find(c => c.client === client);
+  const fraisExistant = blocExistant?.frais_pct || 0;
   const body = {
+    date_commande: blocExistant?.date_commande || new Date().toISOString().slice(0, 10),
+    note: blocExistant?.note || null,
     client,
     produit_id: opt.value,
     produit_nom: opt.textContent,
