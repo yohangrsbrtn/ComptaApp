@@ -168,7 +168,7 @@ function _tplVentes() {
       <div class="card kpi"><div class="label">Bénéfice</div><div class="value pos">${fmtEUR(benef)}</div></div>
       <div class="card kpi"><div class="label">Reste à encaisser</div><div class="value" style="color:${resteAEncaisser>0.01?'var(--red)':'inherit'}">${fmtEUR(resteAEncaisser)}</div></div>
     </div>
-    <div class="toolbar"><div class="search"><input placeholder="Rechercher un client…" value="${esc(_chVentesSearch)}" oninput="_chVentesSearch=this.value;renderChimie()"></div></div>
+    <div class="toolbar"><div class="search"><input placeholder="Rechercher un client…" value="${esc(_chVentesSearch)}" oninput="_chVentesSearch=this.value;renderChimie()"></div><button class="btn btn-ghost" onclick="ouvrirListeClientsChimie()">Liste des clients</button></div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté</th><th>Achat</th><th>Vente</th><th>Bénéfice</th><th></th></tr></thead>
@@ -234,6 +234,37 @@ function _tplVentes() {
         </tbody>
       </table>
     </div>`;
+}
+
+async function ouvrirListeClientsChimie() {
+  const ventes = await sbSelect('compta_ventes', 'select=client&annulee=eq.false&frais_ligne=eq.false');
+  const noms = {};
+  const ajouter = (brut, source) => {
+    const nom = (brut || '').replace(/ \(\d+\)$/, '').replace(/\s+/g, ' ').trim();
+    if (!nom) return;
+    const cle = nom.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const n = noms[cle] = noms[cle] || { nom, vente: false, attente: false };
+    n[source] = true;
+  };
+  ventes.forEach(v => ajouter(v.client, 'vente'));
+  _chClients.forEach(c => ajouter(c.client, 'attente'));
+  const liste = Object.values(noms).sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+  const texte = liste.map(n => n.nom).join('\n');
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Clients chimie (${liste.length})</h3>
+    <div class="page-sub" style="margin-bottom:10px;">Sans doublons — ceux qui ont une vente validée ou une commande en cours.</div>
+    <div style="max-height:50vh;overflow-y:auto;margin-bottom:12px;">
+      ${liste.map(n => `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);">${esc(n.nom)}${n.attente && !n.vente ? ' <span class="badge badge-gold">commande en cours</span>' : ''}</div>`).join('') || '<div class="empty">Aucun client</div>'}
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Fermer</button>
+      <button class="btn btn-primary" onclick='navigator.clipboard.writeText(${JSON.stringify(texte)}).then(() => toast("Liste copiée", "ok"))'>Copier la liste</button>
+    </div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
 }
 
 function ouvrirEncaisserSolde(client, dateVente, resteDu) {
