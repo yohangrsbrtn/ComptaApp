@@ -1058,11 +1058,13 @@ async function _ccChampSauvegarder(cl, champ, val) {
 const _ccDateSauvegarder = (cl, val) => _ccChampSauvegarder(cl, 'date_commande', val);
 const _ccNoteSauvegarder = (cl, val) => _ccChampSauvegarder(cl, 'note', val.trim());
 
-async function _ccToggleCote(cl) {
-  const lignes = _chClients.filter(c => c.client === cl);
-  const nouveau = !lignes.every(l => l.mis_de_cote);
+async function _ccToggleLigne(id) {
+  const l = _chClients.find(c => c.id === id);
+  if (!l) return;
+  const nouveau = !l.mis_de_cote;
   try {
-    for (const l of lignes) { await sbUpdate('compta_commandes_clients', l.id, { mis_de_cote: nouveau }); l.mis_de_cote = nouveau; }
+    await sbUpdate('compta_commandes_clients', id, { mis_de_cote: nouveau });
+    l.mis_de_cote = nouveau;
     document.getElementById('ch-body').innerHTML = _tplClients();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
@@ -1074,12 +1076,12 @@ function _tplClients() {
   const clients = Object.keys(parClient).sort((a, b) => Number(estDeCote(a)) - Number(estDeCote(b)));
   const nbAPreparer = clients.filter(cl => !estDeCote(cl)).length;
   return `
-    <div class="toolbar"><div class="page-sub">${nbAPreparer} à préparer · ${clients.length - nbAPreparer} mise${clients.length - nbAPreparer > 1 ? 's' : ''} de côté</div><button class="btn btn-primary" onclick="openCmdClientModal()">+ Ligne commande</button></div>
+    <div class="toolbar"><div class="page-sub">${nbAPreparer} à préparer · ${clients.length - nbAPreparer} prête${clients.length - nbAPreparer > 1 ? 's' : ''} à distribuer</div><button class="btn btn-primary" onclick="openCmdClientModal()">+ Ligne commande</button></div>
     ${clients.length ? clients.map((cl, idx) => {
       const lignes = parClient[cl];
       const deCote = estDeCote(cl);
       const entete = idx === 0 || estDeCote(clients[idx - 1]) !== deCote
-        ? `<div style="font-weight:700;margin:${idx === 0 ? '0' : '22px'} 0 10px;color:${deCote ? 'var(--accent2)' : 'var(--gold)'};">${deCote ? '✓ Mises de côté — prêtes à remettre' : 'À préparer'}</div>` : '';
+        ? `<div style="font-weight:700;margin:${idx === 0 ? '0' : '22px'} 0 10px;color:${deCote ? 'var(--accent2)' : 'var(--gold)'};">${deCote ? '✓ Prêtes à distribuer' : 'À préparer'}</div>` : '';
       const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
       const idSafe = cl.replace(/[^a-zA-Z0-9]/g, '_');
       const frais = Number(lignes[0]?.frais_pct || 0);
@@ -1090,11 +1092,10 @@ function _tplClients() {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:8px;">
             <div style="font-weight:700;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>${esc(cl)}</div>
-            ${deCote ? '<span class="badge badge-green">Mis de côté</span>' : ''}
+            ${deCote ? '<span class="badge badge-green">Tout est prêt</span>' : ''}
             <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" title="Ajouter une ligne pour ce client" onclick='openCmdClientModal(${JSON.stringify(cl)})'>+</button>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn ${deCote ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick='_ccToggleCote(${JSON.stringify(cl)})'>${deCote ? '✓ Mis de côté' : 'Mettre de côté'}</button>
             <button class="btn btn-ghost btn-sm" onclick='blocPrixCoutant(${JSON.stringify(cl)})'>Tout au prix coûtant</button>
             <button class="btn btn-ghost btn-sm" onclick='supprimerBlocCmdClient(${JSON.stringify(cl)})'>Supprimer le bloc</button>
             <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
@@ -1108,11 +1109,12 @@ function _tplClients() {
           <textarea rows="1" placeholder="Note sur cette commande…" onchange='_ccNoteSauvegarder(${JSON.stringify(cl)}, this.value)' style="flex:1;min-width:200px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-family:inherit;font-size:14px;resize:vertical;">${esc(note)}</textarea>
         </div>
         <table>
-          <thead><tr><th>Produit</th><th>Qté</th><th>PU vente</th><th>Total</th><th></th></tr></thead>
+          <thead><tr><th style="width:86px;">Prêt</th><th>Produit</th><th>Qté</th><th>PU vente</th><th>Total</th><th></th></tr></thead>
           <tbody>
             ${lignes.map(l => `
-              <tr>
-                <td style="cursor:pointer;" onclick="openCmdClientModal(null, '${l.id}')">${esc(l.produit_nom)}</td>
+              <tr style="${l.mis_de_cote ? 'background:rgba(16,185,129,.14);' : ''}">
+                <td><button class="btn ${l.mis_de_cote ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="event.stopPropagation();_ccToggleLigne('${l.id}')">${l.mis_de_cote ? '✓ Prêt' : 'Prêt'}</button></td>
+                <td style="cursor:pointer;${l.mis_de_cote ? 'font-weight:700;' : ''}" onclick="openCmdClientModal(null, '${l.id}')">${esc(l.produit_nom)}</td>
                 <td>
                   <div style="display:flex;align-items:center;gap:6px;">
                     <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="event.stopPropagation();ajusterQteCmdClient('${l.id}', -1)">−</button>
@@ -1127,19 +1129,19 @@ function _tplClients() {
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="3" style="text-align:right;">Total avant frais</td>
+              <td colspan="4" style="text-align:right;">Total avant frais</td>
               <td>${fmtEUR(totalBrut)}</td>
               <td></td>
             </tr>
             <tr>
-              <td colspan="3" style="text-align:right;font-weight:600;">Frais</td>
+              <td colspan="4" style="text-align:right;font-weight:600;">Frais</td>
               <td>
                 <input type="number" step="0.1" value="${frais}" style="width:70px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput='_ccFraisApercu(${JSON.stringify(cl)}, ${totalBrut}, this.value)' onchange='_ccFraisSauvegarder(${JSON.stringify(cl)}, this.value)'> %
               </td>
               <td></td>
             </tr>
             <tr>
-              <td colspan="3" style="text-align:right;font-weight:700;">Total après frais</td>
+              <td colspan="4" style="text-align:right;font-weight:700;">Total après frais</td>
               <td id="cc-total-${idSafe}" style="font-weight:700;">${fmtEUR(_ccTotalAvecFrais(totalBrut, frais))}</td>
               <td></td>
             </tr>
@@ -1223,10 +1225,6 @@ async function saveCmdClient(editId) {
       toast('Ligne modifiée', 'ok');
       await renderChimie();
     } else {
-      if (blocExistant?.mis_de_cote) {
-        for (const l of _chClients.filter(c => c.client === client)) await sbUpdate('compta_commandes_clients', l.id, { mis_de_cote: false });
-        toast('Nouvelle ligne : ce bloc repasse en « à préparer »', 'ok');
-      }
       await sbInsert('compta_commandes_clients', body);
       toast('Ligne ajoutée', 'ok');
       _chClients = await sbSelect('compta_commandes_clients', 'select=*&order=created_at.desc');
