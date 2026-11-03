@@ -148,9 +148,18 @@ function _paCalculerRetards(tousAnnee, ignores, annee) {
   ignores.forEach(i => couvrir(i.client_id, `${i.mois}-${i.annee}`));
   const moisCourant = new Date().getMonth();
   const retards = [];
-  S.clients.filter(c => c.statut === 'actif' && c.date_debut).forEach(c => {
-    const debut = new Date(c.date_debut);
-    const premier = debut.getFullYear() < annee ? 0 : debut.getFullYear() > annee ? 99 : debut.getMonth();
+  retards.nonAnalyses = [];
+  S.clients.filter(c => c.statut === 'actif').forEach(c => {
+    let premier;
+    if (c.date_debut) {
+      const debut = new Date(c.date_debut);
+      premier = debut.getFullYear() < annee ? 0 : debut.getFullYear() > annee ? 99 : debut.getMonth();
+    } else {
+      // Pas de date de début sur la fiche : on part du premier encaissement de l'année.
+      const idx = tousAnnee.filter(p => p.client_id === c.id && !p.regularisation).map(p => MOIS.indexOf(p.mois)).filter(i => i >= 0);
+      if (!idx.length) { retards.nonAnalyses.push(c); return; }
+      premier = Math.min(...idx);
+    }
     const fin = c.date_fin && new Date(c.date_fin).getFullYear() === annee ? Math.min(moisCourant - 1, new Date(c.date_fin).getMonth()) : moisCourant - 1;
     for (let i = premier; i <= fin; i++) {
       const cle = `${MOIS[i]}-${annee}`;
@@ -161,7 +170,9 @@ function _paCalculerRetards(tousAnnee, ignores, annee) {
 }
 
 function _paBlocRetards(retards) {
-  if (!retards.length) return `<div class="page-sub" style="margin:0 0 18px;"><span class="badge badge-green">Aucun retard</span> sur les mois passés de l'année.</div>`;
+  const nonAnalyses = (retards.nonAnalyses || []).length
+    ? `<div class="page-sub" style="margin:-10px 0 18px;">Non analysés (ni date de début de coaching, ni encaissement cette année) : ${retards.nonAnalyses.map(c => esc(c.prenom) + ' ' + esc(c.nom)).join(', ')}. Renseigne leur date de début dans Clients pour les suivre.</div>` : '';
+  if (!retards.length) return `<div class="page-sub" style="margin:0 0 18px;"><span class="badge badge-green">Aucun retard</span> sur les mois passés de l'année.</div>${nonAnalyses}`;
   const total = retards.reduce((s, r) => s + Number(r.client.tarif || 0), 0);
   return `
     <div class="page-sub" style="margin:0 0 10px;font-weight:700;color:var(--red);">Retards de paiement (${retards.length}) — environ ${fmtEUR(total)} à récupérer</div>
@@ -181,7 +192,7 @@ function _paBlocRetards(retards) {
             </tr>`).join('')}
         </tbody>
       </table>
-    </div>`;
+    </div>${nonAnalyses}`;
 }
 
 async function regulariserRetard(clientId, cle) {
