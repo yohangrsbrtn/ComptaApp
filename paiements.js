@@ -176,7 +176,7 @@ function _paBlocRetards(retards) {
               <td>${r.client.tarif ? fmtEUR(r.client.tarif) : '—'}</td>
               <td style="display:flex;gap:6px;">
                 <button class="btn btn-primary btn-sm" onclick="regulariserRetard('${r.client.id}', '${r.cle}')">Régulariser</button>
-                <button class="btn btn-ghost btn-sm" title="Ce mois n'était pas dû (pause, paiement en plusieurs fois…)" onclick="ignorerRetard('${r.client.id}', '${r.mois}', ${r.annee})">Pas dû</button>
+                <button class="btn btn-ghost btn-sm" title="Ne touche à aucun montant : retire juste ce mois de la liste (déjà payé avant, pause, paiement en plusieurs fois…)" onclick="ignorerRetard('${r.client.id}', '${r.mois}', ${r.annee})">Déjà réglé / pas dû</button>
               </td>
             </tr>`).join('')}
         </tbody>
