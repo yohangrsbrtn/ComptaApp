@@ -37,9 +37,13 @@ async function renderPaiements() {
 }
 
 async function _renderPaiementsMois() {
-  const [rows, notes] = await Promise.all([
+  const anneeReelle = new Date().getFullYear();
+  const [rows, notes, regulRows, ignores, tousAnnee] = await Promise.all([
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}&order=date_paiement.asc`),
     sbSelect('compta_notes_paiement', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}`),
+    sbSelect('compta_paiements', 'regularisation=eq.true&select=client_id,mois_regles').catch(() => []),
+    sbSelect('compta_retards_ignores', 'select=client_id,mois,annee').catch(() => []),
+    sbSelect('compta_paiements', `annee=eq.${anneeReelle}&select=client_id,mois,annee,regularisation,mois_regles`).catch(() => sbSelect('compta_paiements', `annee=eq.${anneeReelle}&select=client_id,mois,annee,regularisation`)),
   ]);
   _paRows = rows;
   const notesParClient = {};
@@ -49,7 +53,12 @@ async function _renderPaiementsMois() {
   const totalSeance = _paRows.reduce((s, p) => s + Number(p.mt_seance || 0), 0);
   const totalUrssaf = _paRows.filter(p => p.decla_urssaf).reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0);
 
-  const clientsPayes = new Set(_paRows.filter(p => p.client_id).map(p => p.client_id));
+  // Un paiement de régularisation ne couvre que les mois qu'il liste, pas son propre mois.
+  const cleAffichee = `${_paMois}-${_paAnnee}`;
+  const clientsPayes = new Set(_paRows.filter(p => p.client_id && !p.regularisation).map(p => p.client_id));
+  regulRows.forEach(r => { if (r.client_id && (r.mois_regles || []).includes(cleAffichee)) clientsPayes.add(r.client_id); });
+  ignores.forEach(i => { if (`${i.mois}-${i.annee}` === cleAffichee) clientsPayes.add(i.client_id); });
+  const retards = _paCalculerRetards(tousAnnee, ignores, anneeReelle);
   const estMoisEnCours = _paMois === moisActuel() && _paAnnee === new Date().getFullYear();
   const jourAujourdhui = new Date().getDate();
   const enAttente = S.clients
@@ -72,6 +81,8 @@ async function _renderPaiementsMois() {
       <div class="card kpi"><div class="label">Total</div><div class="value">${fmtEUR(totalSuivi + totalSeance)}</div></div>
       <div class="card kpi"><div class="label">Déclaré URSSAF</div><div class="value" id="pa-total-urssaf">${fmtEUR(totalUrssaf)}</div></div>
     </div>
+
+    ${_paBlocRetards(retards)}
 
     <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Clients en attente de paiement — ${_paMois} (${enAttente.length})</div>
     <div class="table-wrap" style="margin-bottom:24px;">
@@ -108,7 +119,7 @@ async function _renderPaiementsMois() {
         <tbody>
           ${_paRows.length ? _paRows.map(p => `
             <tr>
-              <td><b>${esc(p.nom_client)}</b></td>
+              <td><b>${esc(p.nom_client)}</b>${p.regularisation ? `<div class="page-sub">Régularisation : ${(p.mois_regles || []).map(_paNomCle).join(', ') || '—'}</div>` : ''}</td>
               <td>${fmtDate(p.date_paiement)}</td>
               <td>${p.mt_suivi ? fmtEUR(p.mt_suivi) : '—'}</td>
               <td>${p.mt_seance ? fmtEUR(p.mt_seance) : '—'}</td>
@@ -119,6 +130,87 @@ async function _renderPaiementsMois() {
         </tbody>
       </table>
     </div>`;
+}
+
+const _paNomMois = m => m.charAt(0) + m.slice(1).toLowerCase();
+const _paNomCle = cle => { const [m, a] = cle.split('-'); return `${_paNomMois(m)} ${a}`; };
+
+// Mois passés de l'année (depuis le début du coaching) sans encaissement, sans régularisation
+// qui les couvre, et non marqués "pas dû". Le mois en cours reste géré par la liste d'attente.
+function _paCalculerRetards(tousAnnee, ignores, annee) {
+  const couverts = {};
+  const couvrir = (id, cle) => { (couverts[id] = couverts[id] || new Set()).add(cle); };
+  tousAnnee.forEach(p => {
+    if (!p.client_id) return;
+    if (!p.regularisation) couvrir(p.client_id, `${p.mois}-${p.annee}`);
+    (p.mois_regles || []).forEach(k => couvrir(p.client_id, k));
+  });
+  ignores.forEach(i => couvrir(i.client_id, `${i.mois}-${i.annee}`));
+  const moisCourant = new Date().getMonth();
+  const retards = [];
+  S.clients.filter(c => c.statut === 'actif' && c.date_debut).forEach(c => {
+    const debut = new Date(c.date_debut);
+    const premier = debut.getFullYear() < annee ? 0 : debut.getFullYear() > annee ? 99 : debut.getMonth();
+    const fin = c.date_fin && new Date(c.date_fin).getFullYear() === annee ? Math.min(moisCourant - 1, new Date(c.date_fin).getMonth()) : moisCourant - 1;
+    for (let i = premier; i <= fin; i++) {
+      const cle = `${MOIS[i]}-${annee}`;
+      if (!(couverts[c.id] && couverts[c.id].has(cle))) retards.push({ client: c, mois: MOIS[i], annee, cle, index: i });
+    }
+  });
+  return retards.sort((a, b) => (a.client.nom || '').localeCompare(b.client.nom || '') || a.index - b.index);
+}
+
+function _paBlocRetards(retards) {
+  if (!retards.length) return `<div class="page-sub" style="margin:0 0 18px;"><span class="badge badge-green">Aucun retard</span> sur les mois passés de l'année.</div>`;
+  const total = retards.reduce((s, r) => s + Number(r.client.tarif || 0), 0);
+  return `
+    <div class="page-sub" style="margin:0 0 10px;font-weight:700;color:var(--red);">Retards de paiement (${retards.length}) — environ ${fmtEUR(total)} à récupérer</div>
+    <div class="table-wrap" style="margin-bottom:24px;border-color:rgba(248,113,113,.4);">
+      <table>
+        <thead><tr><th>Client</th><th>Mois en retard</th><th>Tarif</th><th></th></tr></thead>
+        <tbody>
+          ${retards.map(r => `
+            <tr>
+              <td><b>${esc(r.client.prenom)} ${esc(r.client.nom)}</b></td>
+              <td><span class="badge badge-red">${_paNomMois(r.mois)}</span></td>
+              <td>${r.client.tarif ? fmtEUR(r.client.tarif) : '—'}</td>
+              <td style="display:flex;gap:6px;">
+                <button class="btn btn-primary btn-sm" onclick="regulariserRetard('${r.client.id}', '${r.cle}')">Régulariser</button>
+                <button class="btn btn-ghost btn-sm" title="Ce mois n'était pas dû (pause, paiement en plusieurs fois…)" onclick="ignorerRetard('${r.client.id}', '${r.mois}', ${r.annee})">Pas dû</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function regulariserRetard(clientId, cle) {
+  _paMois = moisActuel(); _paAnnee = new Date().getFullYear(); _paTab = 'mois';
+  await renderPaiements();
+  openPaiementModal({ clientId, cle });
+}
+
+async function ignorerRetard(clientId, mois, annee) {
+  try { await sbInsert('compta_retards_ignores', { client_id: clientId, mois, annee }); await renderPaiements(); }
+  catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
+function _paBlocRegul(clesCochees = [], actif = false) {
+  const annee = new Date().getFullYear();
+  return `
+    <div class="checkbox-row"><input id="pf-regul" type="checkbox" ${actif ? 'checked' : ''} onchange="document.getElementById('pf-regul-mois').style.display=this.checked?'block':'none'"> <label>Régularisation (règle un ou plusieurs mois en retard)</label></div>
+    <div id="pf-regul-mois" style="display:${actif ? 'block' : 'none'};margin:8px 0 14px;">
+      <div class="page-sub" style="margin-bottom:6px;">Mois réglés par ce paiement — l'argent reste compté en ${_paMois}. Un mois non coché reste en attente.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 14px;">
+        ${MOIS.map(m => { const k = `${m}-${annee}`; return `<label style="font-size:13px;display:flex;gap:5px;align-items:center;"><input type="checkbox" class="pf-regul-m" value="${k}" ${clesCochees.includes(k) ? 'checked' : ''}> ${_paNomMois(m)}</label>`; }).join('')}
+      </div>
+    </div>`;
+}
+
+function _paLireRegul() {
+  const regularisation = !!document.getElementById('pf-regul')?.checked;
+  const mois_regles = regularisation ? [...document.querySelectorAll('.pf-regul-m:checked')].map(x => x.value) : [];
+  return { regularisation, mois_regles };
 }
 
 async function relancerPaiementClient(apptrainingClientId, nomClient) {
@@ -211,6 +303,7 @@ function ouvrirValidationPaiementClient(clientId) {
     <div class="field"><label>Banque</label>
       <select id="vp-banque">${['Qonto','Revolut','Crédit Agricole','Sumeria','Espèces','Paypal'].map(b => `<option ${c.moy_paiement===b?'selected':''}>${b}</option>`).join('')}</select>
     </div>
+    ${_paBlocRegul()}
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick="validerPaiementClient('${clientId}')">Valider</button>
@@ -223,6 +316,8 @@ function ouvrirValidationPaiementClient(clientId) {
 async function validerPaiementClient(clientId) {
   const c = S.clients.find(x => x.id === clientId);
   if (!c) return;
+  const regul = _paLireRegul();
+  if (regul.regularisation && !regul.mois_regles.length) { toast('Régularisation : coche au moins un mois réglé', 'err'); return; }
   try {
     await sbInsert('compta_paiements', {
       client_id: clientId, nom_client: `${c.prenom} ${c.nom}`, mois: _paMois, annee: _paAnnee,
@@ -231,6 +326,7 @@ async function validerPaiementClient(clientId) {
       mt_seance: parseFloat(document.getElementById('vp-seance')?.value) || 0,
       banque: document.getElementById('vp-banque').value,
       decla_urssaf: false,
+      ..._paLireRegul(),
     });
     document.querySelector('.modal-bg')?.remove();
     toast('Paiement validé', 'ok');
@@ -432,7 +528,7 @@ async function importerToutGoCardless() {
   await renderPaiements();
 }
 
-function openPaiementModal() {
+function openPaiementModal(prefill) {
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal">
@@ -453,6 +549,7 @@ function openPaiementModal() {
       <select id="pf-banque">${['Qonto','Revolut','Crédit Agricole','Sumeria','Espèces','Paypal'].map(b => `<option>${b}</option>`).join('')}</select>
     </div>
     <div class="checkbox-row"><input id="pf-urssaf" type="checkbox"> <label>Déclarer URSSAF</label></div>
+    ${_paBlocRegul(prefill?.cle ? [prefill.cle] : [], !!prefill?.cle)}
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Annuler</button>
       <button class="btn btn-primary" onclick="savePaiement()">Enregistrer</button>
@@ -460,6 +557,7 @@ function openPaiementModal() {
   </div>`;
   bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+  if (prefill?.clientId) { document.getElementById('pf-client').value = prefill.clientId; _paAutofill(); }
 }
 
 function _paAutofill() {
@@ -486,7 +584,9 @@ async function savePaiement() {
     mt_seance: parseFloat(document.getElementById('pf-seance')?.value) || 0,
     banque: document.getElementById('pf-banque').value,
     decla_urssaf: document.getElementById('pf-urssaf').checked,
+    ..._paLireRegul(),
   };
+  if (body.regularisation && !body.mois_regles.length) { toast('Régularisation : coche au moins un mois réglé', 'err'); return; }
   try {
     await sbInsert('compta_paiements', body);
     document.querySelector('.modal-bg')?.remove();
