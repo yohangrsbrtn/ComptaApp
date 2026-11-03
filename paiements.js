@@ -4,6 +4,7 @@ let _paRows = [];
 let _paTab = 'mois';
 
 let _paDerniereSyncGC = 0;
+let _paNbRejetsConnus = null;
 
 async function renderPaiements() {
   await loadClients();
@@ -38,13 +39,15 @@ async function renderPaiements() {
 
 async function _renderPaiementsMois() {
   const anneeReelle = new Date().getFullYear();
-  const [rows, notes, regulRows, ignores, tousAnnee] = await Promise.all([
+  const [rows, notes, regulRows, ignores, tousAnnee, rejetsBruts] = await Promise.all([
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}&order=date_paiement.asc`),
     sbSelect('compta_notes_paiement', `mois=eq.${encodeURIComponent(_paMois)}&annee=eq.${_paAnnee}`),
     sbSelect('compta_paiements', 'regularisation=eq.true&select=client_id,mois_regles').catch(() => []),
     sbSelect('compta_retards_ignores', 'select=client_id,mois,annee').catch(() => []),
     sbSelect('compta_paiements', `annee=eq.${anneeReelle}&select=client_id,mois,annee,regularisation,mois_regles`).catch(() => sbSelect('compta_paiements', `annee=eq.${anneeReelle}&select=client_id,mois,annee,regularisation`)),
+    sbSelect('compta_gocardless_rejets', 'masque=eq.false&order=charge_date.desc').catch(() => []),
   ]);
+  _paNbRejetsConnus = rejetsBruts.length;
   _paRows = rows;
   const notesParClient = {};
   notes.forEach(n => notesParClient[n.client_id] = n);
@@ -59,6 +62,7 @@ async function _renderPaiementsMois() {
   regulRows.forEach(r => { if (r.client_id && (r.mois_regles || []).includes(cleAffichee)) clientsPayes.add(r.client_id); });
   ignores.forEach(i => { if (`${i.mois}-${i.annee}` === cleAffichee) clientsPayes.add(i.client_id); });
   const retards = _paCalculerRetards(tousAnnee, ignores, anneeReelle);
+  const rejets = _paRejetsATraiter(rejetsBruts, retards.couverts);
   const estMoisEnCours = _paMois === moisActuel() && _paAnnee === new Date().getFullYear();
   const jourAujourdhui = new Date().getDate();
   const enAttente = S.clients
@@ -82,6 +86,7 @@ async function _renderPaiementsMois() {
       <div class="card kpi"><div class="label">Déclaré URSSAF</div><div class="value" id="pa-total-urssaf">${fmtEUR(totalUrssaf)}</div></div>
     </div>
 
+    ${_paBlocRejets(rejets)}
     ${_paBlocRetards(retards)}
 
     <div class="page-sub" style="margin:0 0 10px;font-weight:700;">Clients en attente de paiement — ${_paMois} (${enAttente.length})</div>
@@ -148,6 +153,7 @@ function _paCalculerRetards(tousAnnee, ignores, annee) {
   ignores.forEach(i => couvrir(i.client_id, `${i.mois}-${i.annee}`));
   const moisCourant = new Date().getMonth();
   const retards = [];
+  retards.couverts = couverts;
   retards.nonAnalyses = [];
   S.clients.filter(c => c.statut === 'actif').forEach(c => {
     let premier;
@@ -167,6 +173,45 @@ function _paCalculerRetards(tousAnnee, ignores, annee) {
     }
   });
   return retards.sort((a, b) => (a.client.nom || '').localeCompare(b.client.nom || '') || a.index - b.index);
+}
+
+// Un paiement rejeté reste signalé tant que le mois visé n'est ni encaissé, ni régularisé, ni masqué.
+function _paRejetsATraiter(rejets, couverts) {
+  return rejets.map(r => {
+    const client = _matchClientGC(r.nom_client_gc);
+    const d = r.charge_date ? new Date(r.charge_date) : null;
+    const cle = d ? `${MOIS[d.getMonth()]}-${d.getFullYear()}` : null;
+    return { ...r, client, cle };
+  }).filter(r => !(r.client && r.cle && couverts[r.client.id] && couverts[r.client.id].has(r.cle)));
+}
+
+function _paBlocRejets(rejets) {
+  if (!rejets.length) return '';
+  return `
+    <div class="page-sub" style="margin:0 0 10px;font-weight:700;color:var(--red);">Paiements GoCardless rejetés (${rejets.length}) — facturés mais jamais encaissés</div>
+    <div class="table-wrap" style="margin-bottom:24px;border-color:rgba(248,113,113,.4);">
+      <table>
+        <thead><tr><th>Client</th><th>Date prévue</th><th>Montant</th><th>Statut GoCardless</th><th></th></tr></thead>
+        <tbody>
+          ${rejets.map(r => `
+            <tr>
+              <td><b>${r.client ? esc(r.client.prenom) + ' ' + esc(r.client.nom) : esc(r.nom_client_gc) || '—'}</b>${r.client ? '' : '<div class="page-sub">client non reconnu</div>'}</td>
+              <td>${fmtDate(r.charge_date)}</td>
+              <td>${fmtEUR(r.montant)}</td>
+              <td><span class="badge badge-red">${r.statut === 'charged_back' ? 'Annulé après coup' : 'Rejeté'}</span></td>
+              <td style="display:flex;gap:6px;">
+                ${r.client && r.cle ? `<button class="btn btn-primary btn-sm" onclick="regulariserRetard('${r.client.id}', '${r.cle}')">Régulariser</button>` : ''}
+                <button class="btn btn-ghost btn-sm" title="Ne touche à aucun montant : retire juste cette alerte" onclick="masquerRejetGC('${r.id}')">Masquer</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function masquerRejetGC(id) {
+  try { await sbUpdate('compta_gocardless_rejets', id, { masque: true }); await renderPaiements(); }
+  catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
 function _paBlocRetards(retards) {
@@ -576,7 +621,8 @@ async function _syncEtImporterAutoGoCardless() {
     const importes = await _autoImporterMatchesGC();
     if (importes > 0) toast(`${importes} paiement(s) GoCardless versé(s) rattaché(s) automatiquement`, 'ok');
     else if (data.nouveaux > 0) toast(`${data.nouveaux} nouveau(x) paiement(s) versé(s) — à rattacher dans l'onglet GoCardless`, 'ok');
-    return importes + (data.nouveaux || 0);
+    const rejetsChanges = typeof data.rejets === 'number' && data.rejets !== _paNbRejetsConnus ? 1 : 0;
+    return importes + (data.nouveaux || 0) + rejetsChanges;
   } catch { return 0; /* silencieux : la synchro manuelle affichera l'erreur si besoin */ }
 }
 

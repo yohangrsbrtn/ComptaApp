@@ -149,6 +149,36 @@ async function previsionGoCardless(): Promise<Record<string, { total: number; li
   return parMois;
 }
 
+// Paiements facturés mais rejetés (solde insuffisant…) ou annulés après coup : jamais comptés
+// comme encaissés (ils n'apparaissent dans aucun virement GoCardless), mais enregistrés à part
+// pour que l'app puisse signaler "facturé mais rejeté" au lieu de les laisser invisibles.
+async function enregistrerRejets(): Promise<number> {
+  const depuis = new Date(Date.now() - 150 * 24 * 3600 * 1000).toISOString();
+  let nb = 0;
+  for (const statut of ['failed', 'charged_back']) {
+    let after: string | null = null;
+    do {
+      const qs = new URLSearchParams({ limit: '100', status: statut, 'created_at[gte]': depuis });
+      if (after) qs.set('after', after);
+      const data = await gcFetch(`/payments?${qs.toString()}`);
+      for (const p of data.payments) {
+        const customerId = await customerIdViaMandate(p.links?.mandate);
+        const nom = await nomClient(customerId);
+        const { error } = await supabase.from('compta_gocardless_rejets').upsert({
+          gc_payment_id: p.id,
+          nom_client_gc: nom,
+          montant: p.amount / 100,
+          charge_date: p.charge_date,
+          statut: p.status,
+        }, { onConflict: 'gc_payment_id', ignoreDuplicates: false });
+        if (!error) nb++;
+      }
+      after = data.meta?.cursors?.after ?? null;
+    } while (after);
+  }
+  return nb;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   const url = new URL(req.url);
@@ -213,7 +243,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, total: totalPaiements, nouveaux }), {
+    let rejets = 0;
+    try { rejets = await enregistrerRejets(); } catch (_e) { /* ne bloque jamais la synchro des paiements versés */ }
+    return new Response(JSON.stringify({ ok: true, total: totalPaiements, nouveaux, rejets }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {
