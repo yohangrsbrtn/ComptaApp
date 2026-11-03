@@ -172,10 +172,13 @@ function _paCalculerRetards(tousAnnee, ignores, annee) {
 function _paBlocRetards(retards) {
   const nonAnalyses = (retards.nonAnalyses || []).length
     ? `<div class="page-sub" style="margin:-10px 0 18px;">Non analysés (ni date de début de coaching, ni encaissement cette année) : ${retards.nonAnalyses.map(c => esc(c.prenom) + ' ' + esc(c.nom)).join(', ')}. Renseigne leur date de début dans Clients pour les suivre.</div>` : '';
-  if (!retards.length) return `<div class="page-sub" style="margin:0 0 18px;"><span class="badge badge-green">Aucun retard</span> sur les mois passés de l'année.</div>${nonAnalyses}`;
+  if (!retards.length) return `<div class="page-sub" style="margin:0 0 18px;"><span class="badge badge-green">Aucun retard</span> sur les mois passés de l'année. <button class="btn btn-ghost btn-sm" onclick="ouvrirVerifClient()">Vérifier un client</button></div>${nonAnalyses}`;
   const total = retards.reduce((s, r) => s + Number(r.client.tarif || 0), 0);
   return `
-    <div class="page-sub" style="margin:0 0 10px;font-weight:700;color:var(--red);">Retards de paiement (${retards.length}) — environ ${fmtEUR(total)} à récupérer</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 10px;flex-wrap:wrap;gap:8px;">
+      <div class="page-sub" style="font-weight:700;color:var(--red);">Retards de paiement (${retards.length}) — environ ${fmtEUR(total)} à récupérer</div>
+      <button class="btn btn-ghost btn-sm" onclick="ouvrirVerifClient()">Vérifier un client</button>
+    </div>
     <div class="table-wrap" style="margin-bottom:24px;border-color:rgba(248,113,113,.4);">
       <table>
         <thead><tr><th>Client</th><th>Mois en retard</th><th>Tarif</th><th></th></tr></thead>
@@ -193,6 +196,53 @@ function _paBlocRetards(retards) {
         </tbody>
       </table>
     </div>${nonAnalyses}`;
+}
+
+function ouvrirVerifClient() {
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal">
+    <h3>Vérifier un client</h3>
+    <div class="field"><label>Client</label>
+      <select id="vc2-client" onchange="_paVerifClient(this.value)">
+        <option value="">— choisir —</option>
+        ${[...S.clients].sort((a, b) => (a.nom || '').localeCompare(b.nom || '')).map(c => `<option value="${c.id}">${esc(c.prenom)} ${esc(c.nom)}${c.statut !== 'actif' ? ' (' + esc(c.statut) + ')' : ''}</option>`).join('')}
+      </select>
+    </div>
+    <div id="vc2-resultat"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="this.closest('.modal-bg').remove()">Fermer</button></div>
+  </div>`;
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+async function _paVerifClient(clientId) {
+  const zone = document.getElementById('vc2-resultat');
+  if (!clientId) { zone.innerHTML = ''; return; }
+  const c = S.clients.find(x => x.id === clientId);
+  const annee = new Date().getFullYear();
+  const [paiements, regul, ignores] = await Promise.all([
+    sbSelect('compta_paiements', `client_id=eq.${clientId}&annee=eq.${annee}&order=date_paiement.asc`),
+    sbSelect('compta_paiements', `client_id=eq.${clientId}&regularisation=eq.true`).catch(() => []),
+    sbSelect('compta_retards_ignores', `client_id=eq.${clientId}`).catch(() => []),
+  ]);
+  const moisCourant = new Date().getMonth();
+  const lignes = MOIS.slice(0, moisCourant + 1).map((m, i) => {
+    const cle = `${m}-${annee}`;
+    const payes = paiements.filter(p => p.mois === m && !p.regularisation);
+    const reg = regul.filter(r => (r.mois_regles || []).includes(cle));
+    const ign = ignores.find(x => x.mois === m && x.annee === annee);
+    let etat;
+    if (payes.length) etat = `<span class="badge badge-green">Payé</span> ${payes.map(p => `${fmtEUR(Number(p.mt_suivi || 0) + Number(p.mt_seance || 0))} · ${esc(p.banque) || '—'} · ${fmtDate(p.date_paiement)}`).join(' + ')}`;
+    else if (reg.length) etat = `<span class="badge badge-blue">Régularisé</span> par un paiement de ${reg.map(r => _paNomMois(r.mois) + ' (' + fmtEUR(Number(r.mt_suivi || 0) + Number(r.mt_seance || 0)) + ')').join(', ')}`;
+    else if (ign) etat = '<span class="badge badge-muted">Masqué (déjà réglé / pas dû)</span>';
+    else if (i === moisCourant) etat = '<span class="badge badge-gold">Mois en cours — géré par la liste « en attente »</span>';
+    else etat = '<span class="badge badge-red">Aucun paiement → retard</span>';
+    return `<tr><td>${_paNomMois(m)}</td><td>${etat}</td></tr>`;
+  }).join('');
+  zone.innerHTML = `
+    <div class="page-sub" style="margin-bottom:8px;">Statut : <b>${esc(c.statut)}</b> · Début : <b>${c.date_debut ? fmtDate(c.date_debut) : 'non renseigné'}</b> · Fin : <b>${c.date_fin ? fmtDate(c.date_fin) : '—'}</b> · Moyen : <b>${esc(c.mode_paiement) || '—'}</b></div>
+    <div class="table-wrap"><table><thead><tr><th>Mois</th><th>État</th></tr></thead><tbody>${lignes}</tbody></table></div>`;
 }
 
 async function regulariserRetard(clientId, cle) {
