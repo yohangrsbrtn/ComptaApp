@@ -266,11 +266,13 @@ async function _paVerifClient(clientId) {
   if (!clientId) { zone.innerHTML = ''; return; }
   const c = S.clients.find(x => x.id === clientId);
   const annee = new Date().getFullYear();
-  const [paiements, regul, ignores] = await Promise.all([
+  const [paiements, regul, ignores, rejetsTous] = await Promise.all([
     sbSelect('compta_paiements', `client_id=eq.${clientId}&annee=eq.${annee}&order=date_paiement.asc`),
     sbSelect('compta_paiements', `client_id=eq.${clientId}&regularisation=eq.true`).catch(() => []),
     sbSelect('compta_retards_ignores', `client_id=eq.${clientId}`).catch(() => []),
+    sbSelect('compta_gocardless_rejets', 'order=charge_date.asc').catch(() => []),
   ]);
+  const rejets = rejetsTous.filter(r => _matchClientGC(r.nom_client_gc)?.id === clientId);
   const moisCourant = new Date().getMonth();
   const lignes = MOIS.slice(0, moisCourant + 1).map((m, i) => {
     const cle = `${m}-${annee}`;
@@ -283,6 +285,8 @@ async function _paVerifClient(clientId) {
     else if (ign) etat = '<span class="badge badge-muted">Masqué (déjà réglé / pas dû)</span>';
     else if (i === moisCourant) etat = '<span class="badge badge-gold">Mois en cours — géré par la liste « en attente »</span>';
     else etat = '<span class="badge badge-red">Aucun paiement → retard</span>';
+    const rej = rejets.filter(r => r.charge_date && new Date(r.charge_date).getMonth() === i && new Date(r.charge_date).getFullYear() === annee);
+    if (rej.length) etat += `<div style="margin-top:4px;"><span class="badge badge-red">GoCardless : ${rej.map(r => (r.statut === 'charged_back' ? 'annulé après coup' : 'rejeté') + ' ' + fmtEUR(r.montant) + ' (' + fmtDate(r.charge_date) + ')').join(', ')}</span>${payes.length || reg.length ? ' <span class="page-sub">→ un encaissement est pourtant enregistré pour ce mois</span>' : ''}</div>`;
     return `<tr><td>${_paNomMois(m)}</td><td>${etat}</td></tr>`;
   }).join('');
   zone.innerHTML = `
