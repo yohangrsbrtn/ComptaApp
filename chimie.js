@@ -1058,27 +1058,43 @@ async function _ccChampSauvegarder(cl, champ, val) {
 const _ccDateSauvegarder = (cl, val) => _ccChampSauvegarder(cl, 'date_commande', val);
 const _ccNoteSauvegarder = (cl, val) => _ccChampSauvegarder(cl, 'note', val.trim());
 
+async function _ccToggleCote(cl) {
+  const lignes = _chClients.filter(c => c.client === cl);
+  const nouveau = !lignes.every(l => l.mis_de_cote);
+  try {
+    for (const l of lignes) { await sbUpdate('compta_commandes_clients', l.id, { mis_de_cote: nouveau }); l.mis_de_cote = nouveau; }
+    document.getElementById('ch-body').innerHTML = _tplClients();
+  } catch (e) { toast('Erreur : ' + e.message, 'err'); }
+}
+
 function _tplClients() {
   const parClient = {};
   _chClients.forEach(c => { (parClient[c.client] = parClient[c.client] || []).push(c); });
-  const clients = Object.keys(parClient);
+  const estDeCote = cl => parClient[cl].every(l => l.mis_de_cote);
+  const clients = Object.keys(parClient).sort((a, b) => Number(estDeCote(a)) - Number(estDeCote(b)));
+  const nbAPreparer = clients.filter(cl => !estDeCote(cl)).length;
   return `
-    <div class="toolbar"><div></div><button class="btn btn-primary" onclick="openCmdClientModal()">+ Ligne commande</button></div>
-    ${clients.length ? clients.map(cl => {
+    <div class="toolbar"><div class="page-sub">${nbAPreparer} à préparer · ${clients.length - nbAPreparer} mise${clients.length - nbAPreparer > 1 ? 's' : ''} de côté</div><button class="btn btn-primary" onclick="openCmdClientModal()">+ Ligne commande</button></div>
+    ${clients.length ? clients.map((cl, idx) => {
       const lignes = parClient[cl];
+      const deCote = estDeCote(cl);
+      const entete = idx === 0 || estDeCote(clients[idx - 1]) !== deCote
+        ? `<div style="font-weight:700;margin:${idx === 0 ? '0' : '22px'} 0 10px;color:${deCote ? 'var(--accent2)' : 'var(--gold)'};">${deCote ? '✓ Mises de côté — prêtes à remettre' : 'À préparer'}</div>` : '';
       const totalBrut = lignes.reduce((s, l) => s + l.quantite * l.prix_vente_unitaire, 0);
       const idSafe = cl.replace(/[^a-zA-Z0-9]/g, '_');
       const frais = Number(lignes[0]?.frais_pct || 0);
       const dateCmd = lignes.map(l => l.date_commande).find(Boolean) || (lignes[0]?.created_at || '').slice(0, 10);
       const note = lignes.map(l => l.note).find(Boolean) || '';
-      return `
-      <div class="card" style="margin-bottom:14px;">
+      return `${entete}
+      <div class="card" style="margin-bottom:14px;${deCote ? 'border-color:var(--accent);background:linear-gradient(180deg,rgba(16,185,129,.16),rgba(16,185,129,.05));border-left:5px solid var(--accent);' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:8px;">
             <div style="font-weight:700;cursor:pointer;" onclick='ouvrirDetailClient(${JSON.stringify(cl)})'>${esc(cl)}</div>
+            ${deCote ? '<span class="badge badge-green">Mis de côté</span>' : ''}
             <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" title="Ajouter une ligne pour ce client" onclick='openCmdClientModal(${JSON.stringify(cl)})'>+</button>
           </div>
-          <div style="display:flex;gap:8px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn ${deCote ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick='_ccToggleCote(${JSON.stringify(cl)})'>${deCote ? '✓ Mis de côté' : 'Mettre de côté'}</button>
             <button class="btn btn-ghost btn-sm" onclick='blocPrixCoutant(${JSON.stringify(cl)})'>Tout au prix coûtant</button>
             <button class="btn btn-ghost btn-sm" onclick='supprimerBlocCmdClient(${JSON.stringify(cl)})'>Supprimer le bloc</button>
             <button class="btn btn-primary btn-sm" onclick='ouvrirValidationClient(${JSON.stringify(cl)})'>Valider la vente</button>
@@ -1191,6 +1207,7 @@ async function saveCmdClient(editId) {
   const body = {
     date_commande: blocExistant?.date_commande || new Date().toISOString().slice(0, 10),
     note: blocExistant?.note || null,
+    ...(editId ? {} : { mis_de_cote: false }),
     client,
     produit_id: opt.value,
     produit_nom: opt.textContent,
@@ -1206,6 +1223,10 @@ async function saveCmdClient(editId) {
       toast('Ligne modifiée', 'ok');
       await renderChimie();
     } else {
+      if (blocExistant?.mis_de_cote) {
+        for (const l of _chClients.filter(c => c.client === client)) await sbUpdate('compta_commandes_clients', l.id, { mis_de_cote: false });
+        toast('Nouvelle ligne : ce bloc repasse en « à préparer »', 'ok');
+      }
       await sbInsert('compta_commandes_clients', body);
       toast('Ligne ajoutée', 'ok');
       _chClients = await sbSelect('compta_commandes_clients', 'select=*&order=created_at.desc');
