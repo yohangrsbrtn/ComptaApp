@@ -161,7 +161,31 @@ function _tplVentes() {
     return (a.client || '').localeCompare(b.client || '');
   });
 
+  // Encart "On me doit" : un reste dû par commande (client + date), vu d'un coup d'œil.
+  const dettes = {};
+  actives.forEach(v => {
+    if (!v.client) return;
+    const k = v.client + '|' + v.date;
+    (dettes[k] = dettes[k] || { client: v.client, date: v.date, vente: 0 }).vente += Number(v.total_vente || 0);
+  });
+  const doivent = Object.values(dettes).map(d => {
+    const enc = _chEncaissements.filter(e => e.client === d.client && e.date_vente === d.date);
+    return { ...d, reste: Math.round((d.vente - enc.reduce((s, e) => s + Number(e.montant || 0), 0)) * 100) / 100 };
+  }).filter(d => d.reste > 0.01).sort((a, b) => a.date.localeCompare(b.date));
+  const encartDu = doivent.length ? `
+    <div class="card" style="margin-bottom:18px;border-left:3px solid var(--red);">
+      <div style="font-weight:700;margin-bottom:8px;">On me doit ${fmtEUR(doivent.reduce((s, d) => s + d.reste, 0))}</div>
+      ${doivent.map(d => `
+        <div style="display:flex;align-items:center;gap:12px;padding:5px 0;border-top:1px solid var(--border);">
+          <b style="flex:1;">${esc(d.client)}</b>
+          <span class="page-sub">depuis le ${fmtDate(d.date)}</span>
+          <b style="color:var(--red);min-width:80px;text-align:right;">${fmtEUR(d.reste)}</b>
+          <button class="btn btn-ghost btn-sm" onclick='ouvrirEncaisserSolde(${JSON.stringify(d.client)}, ${JSON.stringify(d.date)}, ${d.reste})'>Encaisser</button>
+        </div>`).join('')}
+    </div>` : '';
+
   return `
+    ${encartDu}
     <div class="grid cards4" style="margin-bottom:18px;">
       <div class="card kpi"><div class="label">Total achat</div><div class="value">${fmtEUR(totalAchat)}</div></div>
       <div class="card kpi"><div class="label">Total vente</div><div class="value pos">${fmtEUR(totalVente)}</div></div>
