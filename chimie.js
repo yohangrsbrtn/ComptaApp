@@ -422,7 +422,7 @@ function _tplStock() {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th>Mis de côté (prêt)</th><th>À préparer</th><th>Dispo</th><th>Dernier inventaire</th><th></th></tr></thead>
+        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th>Dernier inventaire</th><th></th></tr></thead>
         <tbody>
           ${sorted.length ? sorted.map(p => `
             <tr>
@@ -434,16 +434,14 @@ function _tplStock() {
               <td>
                 <div style="display:flex;align-items:center;gap:6px;">
                   <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', -1)">−</button>
-                  <input id="stock-input-${p.id}" type="number" step="0.01" value="${p.stock_reel}" style="width:64px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;text-align:center;" onchange="modifierStockProduit('${p.id}', this.value)">
+                  <input id="stock-input-${p.id}" type="number" step="0.01" value="${Number(p.stock_reel||0) - _ccReserve(p, true)}" style="width:64px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;text-align:center;" onchange="modifierStockProduit('${p.id}', this.value)">
                   <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', 1)">+</button>
                 </div>
+                ${_ccReserve(p, true) ? `<div class="page-sub" style="color:var(--green);margin-top:2px;">+${_ccReserve(p, true)} mis de côté</div>` : ''}
               </td>
-              <td style="${_ccReserve(p, true) ? 'color:var(--green);font-weight:700;' : ''}">${_ccReserve(p, true) || '—'}</td>
-              <td>${_ccReserve(p, false) || '—'}</td>
-              <td id="stock-dispo-${p.id}" style="font-weight:700;color:${Number(p.stock_reel||0) - _ccReserve(p) < 0 ? 'var(--red)' : 'inherit'};">${Number(p.stock_reel||0) - _ccReserve(p)}</td>
               <td class="page-sub">${p.dernier_inventaire ? fmtDate(p.dernier_inventaire) : '<span style="color:var(--red);">Jamais</span>'}</td>
               <td><button class="btn btn-ghost btn-sm" onclick="openProduitModal('${p.id}')">Éditer</button></td>
-            </tr>`).join('') : `<tr><td colspan="11"><div class="empty">Aucun produit</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="8"><div class="empty">Aucun produit</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
@@ -517,27 +515,22 @@ async function validerInventaire() {
 async function ajusterStockProduit(id, delta) {
   const p = _chProduits.find(x => x.id === id);
   if (!p) return;
-  await modifierStockProduit(id, Number(p.stock_reel || 0) + delta);
+  await modifierStockProduit(id, Number(p.stock_reel || 0) - _ccReserve(p, true) + delta);
 }
 
 async function modifierStockProduit(id, valeur) {
   const p = _chProduits.find(x => x.id === id);
   if (!p) return;
-  const nouveauStock = parseFloat(valeur);
-  if (isNaN(nouveauStock)) return;
+  const affiche = parseFloat(valeur);
+  if (isNaN(affiche)) return;
+  const nouveauStock = affiche + _ccReserve(p, true);
   try {
     await sbUpdate('compta_produits', id, { stock_reel: nouveauStock });
     p.stock_reel = nouveauStock;
     // Met juste à jour ce champ et les totaux, sans réafficher tout le tableau —
     // sinon, trié par la colonne Stock, la ligne changerait de place à chaque clic.
     const input = document.getElementById(`stock-input-${id}`);
-    if (input) input.value = nouveauStock;
-    const dispoEl = document.getElementById(`stock-dispo-${id}`);
-    if (dispoEl) {
-      const dispo = nouveauStock - _ccReserve(p);
-      dispoEl.textContent = dispo;
-      dispoEl.style.color = dispo < 0 ? 'var(--red)' : 'inherit';
-    }
+    if (input) input.value = affiche;
     const totalAchat = _chProduits.reduce((s, x) => s + Number(x.stock_reel || 0) * Number(x.prix_achat || 0), 0);
     const totalVente = _chProduits.reduce((s, x) => s + Number(x.stock_reel || 0) * Number(x.prix_vente || 0), 0);
     document.getElementById('stock-total-achat').textContent = fmtEUR(totalAchat);
