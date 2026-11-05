@@ -312,7 +312,10 @@ async function renderDashboard() {
     sbSelect('compta_ventes', 'annulee=eq.false&select=date,total_vente,total_achat&date=gte.2026-01-01&date=lt.2027-01-01'),
   ]);
   const totalMoisSuivi = paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0);
-  const actifs = S.clients.filter(c => c.statut !== 'ancien').length;
+  // Hors clients payants : moi-même et ma copine (pas facturée).
+  const _horsCompte = c => /gro?s?bertin/i.test(c.nom || '') || (/perrine/i.test(c.prenom || '') && /^ay/i.test(c.nom || ''));
+  const clientsComptes = S.clients.filter(c => !_horsCompte(c));
+  const actifs = clientsComptes.filter(c => c.statut !== 'ancien').length;
   const totalFactureAnnee = factures.reduce((s, f) => s + Number(f.montant_total || 0), 0);
 
   const moisAffiches = MOIS.slice(0, moisCourantIdx + 1);
@@ -345,7 +348,7 @@ async function renderDashboard() {
       <div><div class="page-title">Tableau de bord</div><div class="page-sub">${mois} 2026</div></div>
     </div>
     <div class="grid cards4" style="margin-bottom:22px;">
-      <div class="card kpi"><div class="label">Clients actifs</div><div class="value">${actifs}</div><div class="sub">${S.clients.length} au total</div></div>
+      <div class="card kpi"><div class="label">Clients actifs</div><div class="value">${actifs}</div><div class="sub">${clientsComptes.length} au total</div></div>
       <div class="card kpi"><div class="label">Suivis encaissés (${mois.slice(0,4)})</div><div class="value pos">${fmtEUR(totalMoisSuivi)}</div></div>
       <div class="card kpi"><div class="label">Total facturé 2026</div><div class="value">${fmtEUR(totalFactureAnnee)}</div></div>
     </div>
