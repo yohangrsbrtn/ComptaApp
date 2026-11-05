@@ -775,11 +775,17 @@ function commanderBesoinClient(produitId, nom, qte) {
 
 function openCmdFournisseurModal(dateGroupe, prefill) {
   const today = new Date().toISOString().slice(0, 10);
+  const blocs = prefill ? [...new Set(_chFournisseur.map(c => c.date_commande).filter(Boolean))].sort().reverse() : [];
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" data-date-groupe="${dateGroupe || ''}">
     <h3>${dateGroupe ? 'Ajouter une ligne au bloc' : 'Nouvelle commande (nouveau bloc)'}</h3>
-    ${!dateGroupe ? `<div class="field"><label>Date de commande</label><input id="cf-date-commande" type="date" value="${today}"></div>` : `<div class="page-sub" style="margin-bottom:10px;">Rejoint le bloc du ${fmtDate(dateGroupe)} — même date = fusion automatique.</div>`}
+    ${!dateGroupe && blocs.length ? `<div class="field"><label>Ajouter à quelle commande ?</label>
+      <select id="cf-bloc" onchange="document.getElementById('cf-date-wrap').style.display = this.value === 'new' ? '' : 'none'">
+        ${blocs.map((d, i) => `<option value="${d}" ${i === 0 ? 'selected' : ''}>Commande du ${fmtDate(d)}</option>`).join('')}
+        <option value="new">+ Nouvelle commande séparée</option>
+      </select></div>` : ''}
+    ${!dateGroupe ? `<div class="field" id="cf-date-wrap" style="${blocs.length ? 'display:none;' : ''}"><label>Date de commande</label><input id="cf-date-commande" type="date" value="${today}"></div>` : `<div class="page-sub" style="margin-bottom:10px;">Rejoint le bloc du ${fmtDate(dateGroupe)} — même date = fusion automatique.</div>`}
     <div class="field"><label>Produit</label>
       <select id="cf-produit" onchange="_cfAutofill()">
         <option value="">— Nouveau produit —</option>
@@ -872,7 +878,8 @@ async function saveCmdFournisseur() {
   const nom = document.getElementById('cf-nom').value.trim() || (produitId ? opt.textContent : '');
   if (!nom) { toast('Produit requis', 'err'); return; }
   const dateCommandeInput = document.getElementById('cf-date-commande');
-  const dateCommande = dateCommandeInput ? dateCommandeInput.value : (dateGroupe || new Date().toISOString().slice(0, 10));
+  const blocSel = document.getElementById('cf-bloc')?.value;
+  const dateCommande = blocSel && blocSel !== 'new' ? blocSel : dateCommandeInput ? dateCommandeInput.value : (dateGroupe || new Date().toISOString().slice(0, 10));
   const body = {
     date_commande: dateCommande,
     produit_id: produitId,
