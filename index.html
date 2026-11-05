@@ -304,11 +304,12 @@ async function renderDashboard() {
   await loadClients();
   const mois = moisActuel();
   const moisCourantIdx = MOIS.indexOf(mois);
-  const [paiements, factures, paiementsAnnee, lignesAnnee] = await Promise.all([
+  const [paiements, factures, paiementsAnnee, lignesAnnee, ventesAnnee] = await Promise.all([
     sbSelect('compta_paiements', `mois=eq.${encodeURIComponent(mois)}&annee=eq.2026`),
     sbSelect('compta_factures', 'select=montant_total,mois&annee=eq.2026'),
     sbSelect('compta_paiements', 'select=mois,mt_suivi,mt_seance&annee=eq.2026'),
-    sbSelect('compta_budget_lignes', 'select=mois,type,montant&annee=eq.2026'),
+    sbSelect('compta_budget_lignes', 'select=mois,type,montant,categorie&annee=eq.2026'),
+    sbSelect('compta_ventes', 'annulee=eq.false&select=date,total_vente,total_achat&date=gte.2026-01-01&date=lt.2027-01-01'),
   ]);
   const totalMoisSuivi = paiements.reduce((s, p) => s + Number(p.mt_suivi || 0), 0);
   const actifs = S.clients.filter(c => c.statut !== 'ancien').length;
@@ -319,6 +320,17 @@ async function renderDashboard() {
     .filter(p => p.mois === m).reduce((s, p) => s + Number(p.mt_suivi || 0) + Number(p.mt_seance || 0), 0));
   const parType = t => moisAffiches.map(m => lignesAnnee
     .filter(l => l.mois === m && l.type === t).reduce((s, l) => s + Number(l.montant || 0), 0));
+
+  const nbMois = moisAffiches.length;
+  const moyCoaching = revenuCoaching.reduce((a, b) => a + b, 0) / nbMois;
+  const venteChimie = ventesAnnee.reduce((s, v) => s + Number(v.total_vente || 0), 0);
+  const benefChimie = venteChimie - ventesAnnee.reduce((s, v) => s + Number(v.total_achat || 0), 0);
+  const parCat = {};
+  lignesAnnee.filter(l => (l.type === 'depense_fixe' || l.type === 'depense_variable') && !/chimie/i.test(l.categorie || '')
+      && MOIS.indexOf(l.mois) <= moisCourantIdx)
+    .forEach(l => { const c = l.categorie || 'Autre'; parCat[c] = (parCat[c] || 0) + Number(l.montant || 0); });
+  const catsTri = Object.entries(parCat).sort((a, b) => b[1] - a[1]);
+  const moyDepenses = catsTri.reduce((s, [, v]) => s + v, 0) / nbMois;
 
   const serieChart = [
     { label: 'Revenus coaching', color: 'var(--accent2)', values: revenuCoaching },
@@ -336,6 +348,18 @@ async function renderDashboard() {
       <div class="card kpi"><div class="label">Clients actifs</div><div class="value">${actifs}</div><div class="sub">${S.clients.length} au total</div></div>
       <div class="card kpi"><div class="label">Suivis encaissés (${mois.slice(0,4)})</div><div class="value pos">${fmtEUR(totalMoisSuivi)}</div></div>
       <div class="card kpi"><div class="label">Total facturé 2026</div><div class="value">${fmtEUR(totalFactureAnnee)}</div></div>
+    </div>
+    <div class="grid cards4" style="margin-bottom:22px;">
+      <div class="card kpi"><div class="label">Revenu coaching moyen / mois</div><div class="value pos">${fmtEUR(moyCoaching)}</div><div class="sub">sur ${nbMois} mois de 2026</div></div>
+      <div class="card kpi"><div class="label">Revenu chimie moyen / mois</div><div class="value pos">${fmtEUR(venteChimie / nbMois)}</div><div class="sub">bénéfice moyen ${fmtEUR(benefChimie / nbMois)}</div></div>
+      <div class="card kpi"><div class="label">Dépenses moyennes / mois</div><div class="value">${fmtEUR(moyDepenses)}</div><div class="sub">fixes + variables, hors achats chimie</div></div>
+    </div>
+    <div class="card" style="margin-bottom:22px;">
+      <div style="font-weight:700;margin-bottom:10px;">Dépenses moyennes par mois, par catégorie</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Catégorie</th><th>Moyenne / mois</th><th>Total 2026</th></tr></thead>
+        <tbody>${catsTri.length ? catsTri.map(([c, v]) => `<tr><td><b>${esc(c)}</b></td><td>${fmtEUR(v / nbMois)}</td><td class="page-sub">${fmtEUR(v)}</td></tr>`).join('') : '<tr><td colspan="3"><div class="empty">Aucune dépense</div></td></tr>'}</tbody>
+      </table></div>
     </div>
     <div class="card" style="margin-bottom:22px;">
       <div style="font-weight:700;margin-bottom:14px;">Évolution des dépenses et des revenus de coaching — 2026</div>
