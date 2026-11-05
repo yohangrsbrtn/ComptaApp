@@ -422,7 +422,7 @@ function _tplStock() {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th>Réservé clients</th><th>Dispo</th><th>Dernier inventaire</th><th></th></tr></thead>
+        <thead><tr>${th('nom', 'Produit')}${th('marque', 'Marque')}${th('type', 'Type')}<th>Prix achat</th><th>Prix vente</th>${th('stock_reel', 'Stock')}<th>Mis de côté (prêt)</th><th>À préparer</th><th>Dispo</th><th>Dernier inventaire</th><th></th></tr></thead>
         <tbody>
           ${sorted.length ? sorted.map(p => `
             <tr>
@@ -438,11 +438,12 @@ function _tplStock() {
                   <button class="btn btn-ghost btn-sm" style="padding:2px 8px;" onclick="ajusterStockProduit('${p.id}', 1)">+</button>
                 </div>
               </td>
-              <td>${_ccReserve(p) || '—'}</td>
+              <td style="${_ccReserve(p, true) ? 'color:var(--green);font-weight:700;' : ''}">${_ccReserve(p, true) || '—'}</td>
+              <td>${_ccReserve(p, false) || '—'}</td>
               <td id="stock-dispo-${p.id}" style="font-weight:700;color:${Number(p.stock_reel||0) - _ccReserve(p) < 0 ? 'var(--red)' : 'inherit'};">${Number(p.stock_reel||0) - _ccReserve(p)}</td>
               <td class="page-sub">${p.dernier_inventaire ? fmtDate(p.dernier_inventaire) : '<span style="color:var(--red);">Jamais</span>'}</td>
               <td><button class="btn btn-ghost btn-sm" onclick="openProduitModal('${p.id}')">Éditer</button></td>
-            </tr>`).join('') : `<tr><td colspan="10"><div class="empty">Aucun produit</div></td></tr>`}
+            </tr>`).join('') : `<tr><td colspan="11"><div class="empty">Aucun produit</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
@@ -545,8 +546,8 @@ async function modifierStockProduit(id, valeur) {
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
 
-function _ccReserve(p) {
-  return _chClients.filter(c => c.produit_id ? c.produit_id === p.id : c.produit_nom === p.nom).reduce((s, c) => s + Number(c.quantite || 0), 0);
+function _ccReserve(p, pret) {
+  return _chClients.filter(c => (c.produit_id ? c.produit_id === p.id : c.produit_nom === p.nom) && (pret === undefined || !!c.mis_de_cote === pret)).reduce((s, c) => s + Number(c.quantite || 0), 0);
 }
 
 function _chStockTri(col) {
