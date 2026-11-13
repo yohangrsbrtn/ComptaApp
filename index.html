@@ -435,14 +435,15 @@ render();
 // de laisser l'app rester silencieusement périmée jusqu'à expiration du cache, on
 // détecte tout seul qu'un nouveau déploiement est en ligne (l'ETag de la page a changé)
 // et on propose un rechargement en un clic, sans devoir vider le cache à la main.
-let _appEtag = null;
+// On compare les versions de scripts (?v=N) de la page ouverte avec celles de la page
+// en ligne : fiable même si la page ouverte vient elle-même d'un cache périmé.
+const _scriptsOuverts = [...document.querySelectorAll('script[src*="?v="]')].map(x => x.getAttribute('src')).sort().join('|');
 async function _checkAppUpdate() {
   try {
     const res = await fetch(location.pathname + '?_chk=' + Date.now(), { cache: 'no-store' });
-    const etag = res.headers.get('etag');
-    if (!etag) return;
-    if (_appEtag === null) { _appEtag = etag; return; }
-    if (etag !== _appEtag && !document.getElementById('maj-dispo-bandeau')) {
+    const html = await res.text();
+    const enLigne = [...html.matchAll(/<script[^>]+src="([^"]*\?v=[^"]*)"/g)].map(m => m[1]).sort().join('|');
+    if (enLigne && enLigne !== _scriptsOuverts && !document.getElementById('maj-dispo-bandeau')) {
       const b = document.createElement('div');
       b.id = 'maj-dispo-bandeau';
       b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:300;background:var(--accent2);color:#06251b;padding:10px 16px;display:flex;align-items:center;justify-content:center;gap:14px;font-weight:700;font-size:13.5px;';
@@ -451,7 +452,10 @@ async function _checkAppUpdate() {
     }
   } catch { /* pas grave, on retentera au prochain cycle */ }
 }
-setInterval(_checkAppUpdate, 90000);
+_checkAppUpdate();
+setInterval(_checkAppUpdate, 30000);
+window.addEventListener('pageshow', _checkAppUpdate);
+window.addEventListener('focus', _checkAppUpdate);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) _checkAppUpdate(); });
 </script>
 </body>
