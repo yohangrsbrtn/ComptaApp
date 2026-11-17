@@ -248,8 +248,12 @@ async function _plAppliquer(palier) {
       if (noms[id] && p && noms[id] !== p.nom) {
         body.nom = noms[id];
         // Les commandes/ventes retrouvent parfois le produit par son nom : on les aligne.
-        for (const t of ['compta_commandes_clients', 'compta_commandes_fournisseur', 'compta_ventes']) {
-          const r = await authFetch(`${SUPABASE_URL}/rest/v1/${t}?produit_nom=eq.${encodeURIComponent(p.nom)}`, { method: 'PATCH', headers: supaHeaders(), body: JSON.stringify({ produit_nom: noms[id] }) });
+        // Seul le NOM change : les prix déjà enregistrés sur ces lignes ne sont jamais touchés.
+        const filtres = [['compta_commandes_clients', `produit_id=eq.${id}`], ['compta_commandes_fournisseur', `produit_id=eq.${id}`],
+          ['compta_commandes_clients', `produit_nom=eq.${encodeURIComponent(p.nom)}`], ['compta_commandes_fournisseur', `produit_nom=eq.${encodeURIComponent(p.nom)}`],
+          ['compta_ventes', `produit_nom=eq.${encodeURIComponent(p.nom)}`]];
+        for (const [t, f] of filtres) {
+          const r = await authFetch(`${SUPABASE_URL}/rest/v1/${t}?${f}`, { method: 'PATCH', headers: supaHeaders(), body: JSON.stringify({ produit_nom: noms[id] }) });
           if (!r.ok) throw new Error(await r.text());
         }
       }
