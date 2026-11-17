@@ -437,6 +437,7 @@ function _tplStock() {
     <div class="toolbar">
       <button class="btn btn-ghost" onclick="lancerInventaire()">Faire l'inventaire</button>
       <div style="flex:1;"></div>
+      <button class="btn btn-ghost" onclick="ouvrirImportPrix()">Mettre à jour les prix (PDF)</button>
       <button class="btn btn-primary" onclick="openProduitModal()">+ Produit</button>
     </div>
     <div class="grid cards4" style="margin-bottom:18px;">
