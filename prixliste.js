@@ -118,7 +118,22 @@ async function _plAnalyser(file) {
   } catch (e) { statut.textContent = 'Erreur : ' + e.message; }
 }
 
+let _plPalier = 0;
+function _plActuelHtml(l, p) {
+  if (!p) return '';
+  const diff = _plNorm(p.nom) !== _plNorm(_plNomPropre(l.nom));
+  return `${diff ? `<span class="page-sub">${esc(p.nom)} →</span>` : ''} ${fmtEUR(Number(p.prix_achat || 0))}`;
+}
+// Choix manuel d'un produit : on affiche son prix actuel et on coche la ligne.
+function _plChoix(i, id) {
+  const p = _plProduits.find(x => x.id === id);
+  document.getElementById('pl-act-' + i).innerHTML = _plActuelHtml(_plLignes[i], p);
+  const chk = document.querySelector(`.pl-chk[data-i="${i}"]`);
+  if (chk) chk.checked = !!p;
+}
+
 function _plAfficherRevue(palier) {
+  _plPalier = palier;
   // Meilleur produit pour chaque ligne du PDF ; un produit n'est proposé qu'une fois (la meilleure ligne gagne).
   const propositions = _plLignes.map((l, i) => {
     let best = null, bs = 0;
@@ -138,8 +153,8 @@ function _plAfficherRevue(palier) {
     return `<tr>
       <td><input type="checkbox" class="pl-chk" data-i="${pr.i}" ${change || (pr.p && _plNorm(pr.p.nom) !== _plNorm(_plNomPropre(l.nom))) ? 'checked' : ''}></td>
       <td><b>${esc(_plNomPropre(l.nom))}</b><div class="page-sub">${esc(l.section)}${l.marque ? ' · ' + esc(l.marque) : ''} ${esc(l.dosage)}</div></td>
-      <td><select class="pl-sel" data-i="${pr.i}" style="max-width:190px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px;">${options(pr.p?.id)}</select></td>
-      <td>${pr.p && _plNorm(pr.p.nom) !== _plNorm(_plNomPropre(l.nom)) ? `<span class="page-sub">${esc(pr.p.nom)} →</span>` : ''}${ancien === null ? '' : ' ' + fmtEUR(ancien)}</td>
+      <td><select class="pl-sel" data-i="${pr.i}" onchange="_plChoix(${pr.i}, this.value)" style="max-width:190px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px;">${options(pr.p?.id)}</select></td>
+      <td id="pl-act-${pr.i}">${pr.p && _plNorm(pr.p.nom) !== _plNorm(_plNomPropre(l.nom)) ? `<span class="page-sub">${esc(pr.p.nom)} →</span>` : ''}${ancien === null ? '' : ' ' + fmtEUR(ancien)}</td>
       <td style="font-weight:700;color:${change ? (nouveau > ancien ? 'var(--red)' : 'var(--accent2)') : 'inherit'};">${fmtEUR(nouveau)}</td>
     </tr>`;
   }).join('');
