@@ -119,6 +119,17 @@ async function _plAnalyser(file) {
 }
 
 let _plPalier = 0;
+// Une marque entière en un clic : lignes de la marque cochées (produit existant mis à jour, sinon créé), le reste décoché.
+function _plToutMarque(cle) {
+  _plLignes.forEach((l, i) => {
+    const sel = document.querySelector(`.pl-sel[data-i="${i}"]`), chk = document.querySelector(`.pl-chk[data-i="${i}"]`);
+    if (!sel || !chk) return;
+    const dedans = _plNorm(l.section + ' ' + l.marque).includes(cle);
+    if (dedans) { if (!sel.value) sel.value = '__new__'; _plChoix(i, sel.value); chk.checked = true; }
+    else chk.checked = false;
+  });
+  toast('Marque sélectionnée : vérifie le tableau puis clique sur Appliquer', 'ok');
+}
 function _plActuelHtml(l, p) {
   if (!p) return '';
   const diff = _plNorm(p.nom) !== _plNorm(_plNomPropre(l.nom));
@@ -175,6 +186,8 @@ function _plAfficherRevue(palier) {
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="max-width:960px;width:96vw;max-height:90vh;overflow:auto;">
     <h3>Liste de prix — palier ${_PL_TIERS[palier]}</h3>
+    <div style="margin-bottom:10px;"><button class="btn btn-primary btn-sm" onclick="_plToutMarque('status')">Tout traiter : marque Status Pharm</button>
+      <span class="page-sub"> coche toutes les lignes Status Pharm (les manquantes sont ajoutées) et décoche le reste</span></div>
     <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="pl-renommer" checked> Remplacer aussi mes noms de produits par ceux du PDF</label>
     <div class="page-sub" style="margin-bottom:10px;">Coche les lignes à mettre à jour. Corrige la correspondance avec le menu si elle est fausse. Le prix de vente reste le tien : modifie-le dans la colonne si tu veux le changer en même temps.</div>
     <div class="table-wrap"><table>
