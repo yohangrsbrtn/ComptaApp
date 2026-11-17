@@ -131,6 +131,14 @@ function _plChoix(i, id) {
   const chk = document.querySelector(`.pl-chk[data-i="${i}"]`);
   if (chk) chk.checked = !!p;
   document.getElementById('pl-vente-' + i).value = p?.prix_vente ?? '';
+  // Un produit rattaché à une ligne du PDF ne peut plus être supprimé comme « disparu ».
+  const choisis = new Set([...document.querySelectorAll('.pl-sel')].map(x => x.value).filter(Boolean));
+  document.querySelectorAll('.pl-del').forEach(c => {
+    const pris = choisis.has(c.dataset.id);
+    if (pris) c.checked = false;
+    c.disabled = pris;
+    c.closest('tr').style.opacity = pris ? '.4' : '';
+  });
 }
 
 function _plAfficherRevue(palier) {
