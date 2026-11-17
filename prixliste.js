@@ -235,6 +235,12 @@ async function _plAppliquer(palier) {
   if (!Object.keys(maj).length && !suppr.length && !nouveaux.length) { toast('Rien de coché', 'err'); return; }
   if (suppr.length && !confirm(`Supprimer ${suppr.length} produit(s) ? Les anciennes ventes et commandes gardent leur nom.`)) return;
   try {
+    // Suppressions d'abord, puis noms provisoires : évite tout conflit d'unicité pendant les échanges de noms.
+    for (const id of suppr) await sbDelete('compta_produits', id);
+    for (const id of Object.keys(maj)) {
+      const p = _plProduits.find(x => x.id === id);
+      if (noms[id] && p && noms[id] !== p.nom) await sbUpdate('compta_produits', id, { nom: '~tmp~' + id });
+    }
     for (const [id, m] of Object.entries(maj)) {
       const p = _plProduits.find(x => x.id === id);
       const body = { prix_achat: m.prix };
@@ -254,7 +260,6 @@ async function _plAppliquer(palier) {
       if (!isNaN(n.vente)) body.prix_vente = n.vente;
       await sbInsert('compta_produits', body);
     }
-    for (const id of suppr) await sbDelete('compta_produits', id);
     document.querySelector('.modal-bg')?.remove();
     toast(`${Object.keys(maj).length} produit(s) mis à jour, ${nouveaux.length} ajouté(s), ${suppr.length} produit(s) supprimé(s)`, 'ok');
     await renderChimie();
