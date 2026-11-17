@@ -130,6 +130,7 @@ function _plChoix(i, id) {
   document.getElementById('pl-act-' + i).innerHTML = _plActuelHtml(_plLignes[i], p);
   const chk = document.querySelector(`.pl-chk[data-i="${i}"]`);
   if (chk) chk.checked = !!p;
+  document.getElementById('pl-vente-' + i).value = p?.prix_vente ?? '';
 }
 
 function _plAfficherRevue(palier) {
@@ -156,6 +157,7 @@ function _plAfficherRevue(palier) {
       <td><select class="pl-sel" data-i="${pr.i}" onchange="_plChoix(${pr.i}, this.value)" style="max-width:190px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px;">${options(pr.p?.id)}</select></td>
       <td id="pl-act-${pr.i}">${pr.p && _plNorm(pr.p.nom) !== _plNorm(_plNomPropre(l.nom)) ? `<span class="page-sub">${esc(pr.p.nom)} →</span>` : ''}${ancien === null ? '' : ' ' + fmtEUR(ancien)}</td>
       <td style="font-weight:700;color:${change ? (nouveau > ancien ? 'var(--red)' : 'var(--accent2)') : 'inherit'};">${fmtEUR(nouveau)}</td>
+      <td><input type="number" step="0.01" class="pl-vente" id="pl-vente-${pr.i}" data-i="${pr.i}" value="${pr.p?.prix_vente ?? ''}" placeholder="inchangé" style="width:80px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 6px;" oninput="document.querySelector('.pl-chk[data-i=&quot;${pr.i}&quot;]').checked = true"></td>
     </tr>`;
   }).join('');
 
@@ -166,9 +168,9 @@ function _plAfficherRevue(palier) {
   bg.innerHTML = `<div class="modal" style="max-width:960px;width:96vw;max-height:90vh;overflow:auto;">
     <h3>Liste de prix — palier ${_PL_TIERS[palier]}</h3>
     <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="pl-renommer" checked> Remplacer aussi mes noms de produits par ceux du PDF</label>
-    <div class="page-sub" style="margin-bottom:10px;">Coche les lignes à mettre à jour. Corrige la correspondance avec le menu si elle est fausse. Seul le prix d'achat change (pas ton prix de vente).</div>
+    <div class="page-sub" style="margin-bottom:10px;">Coche les lignes à mettre à jour. Corrige la correspondance avec le menu si elle est fausse. Le prix de vente reste le tien : modifie-le dans la colonne si tu veux le changer en même temps.</div>
     <div class="table-wrap"><table>
-      <thead><tr><th></th><th>Ligne du PDF</th><th>Produit chez toi</th><th>Actuel</th><th>Nouveau</th></tr></thead>
+      <thead><tr><th></th><th>Ligne du PDF</th><th>Produit chez toi</th><th>Achat actuel</th><th>Nouvel achat</th><th>Prix de vente</th></tr></thead>
       <tbody>${lignesHtml}</tbody>
     </table></div>
     <h3 style="margin-top:20px;">Chez toi mais plus dans la liste (${absents.length})</h3>
@@ -189,7 +191,7 @@ async function _plAppliquer(palier) {
   const maj = {};
   document.querySelectorAll('.pl-chk:checked').forEach(c => {
     const i = c.dataset.i, id = document.querySelector(`.pl-sel[data-i="${i}"]`).value;
-    if (id) maj[id] = { prix: _plLignes[i].prix[palier], ligne: _plLignes[i] };
+    if (id) maj[id] = { prix: _plLignes[i].prix[palier], ligne: _plLignes[i], vente: parseFloat(document.getElementById('pl-vente-' + i).value) };
   });
   // Nouveaux noms : en cas de doublon (même produit chez plusieurs marques), on ajoute la marque.
   const renommer = document.getElementById('pl-renommer')?.checked;
@@ -208,6 +210,7 @@ async function _plAppliquer(palier) {
     for (const [id, m] of Object.entries(maj)) {
       const p = _plProduits.find(x => x.id === id);
       const body = { prix_achat: m.prix };
+      if (!isNaN(m.vente) && m.vente !== Number(p?.prix_vente)) body.prix_vente = m.vente;
       if (noms[id] && p && noms[id] !== p.nom) {
         body.nom = noms[id];
         // Les commandes/ventes retrouvent parfois le produit par son nom : on les aligne.
