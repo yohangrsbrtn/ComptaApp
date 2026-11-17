@@ -71,6 +71,15 @@ function _plParse(pages) {
   return lignes;
 }
 
+// Le texte du PDF perd certaines ligatures (« ti », « tt ») : on les remet, et on retire les mentions de péremption.
+const _PL_CORR = [[/Retatru de/gi, 'Retatrutide'], [/Cu ng/gi, 'Cutting'], [/halotes n/gi, 'Halotestin'], [/Dos nex/gi, 'Dostinex'], [/\s*-\s*exp\.?\s*date.*$/i, '']];
+function _plNomPropre(nom) {
+  let n = nom;
+  _PL_CORR.forEach(([re, rep]) => { n = n.replace(re, rep); });
+  return n.replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
+}
+const _plTitre = s => (s || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
 let _plLignes = [], _plProduits = [];
 
 function ouvrirImportPrix() {
@@ -127,10 +136,10 @@ function _plAfficherRevue(palier) {
     const ancien = pr.p ? Number(pr.p.prix_achat || 0) : null;
     const change = pr.p && Math.abs(nouveau - ancien) > 0.001;
     return `<tr>
-      <td><input type="checkbox" class="pl-chk" data-i="${pr.i}" ${change ? 'checked' : ''}></td>
-      <td><b>${esc(l.nom)}</b><div class="page-sub">${esc(l.section)}${l.marque ? ' · ' + esc(l.marque) : ''} ${esc(l.dosage)}</div></td>
+      <td><input type="checkbox" class="pl-chk" data-i="${pr.i}" ${change || (pr.p && _plNorm(pr.p.nom) !== _plNorm(_plNomPropre(l.nom))) ? 'checked' : ''}></td>
+      <td><b>${esc(_plNomPropre(l.nom))}</b><div class="page-sub">${esc(l.section)}${l.marque ? ' · ' + esc(l.marque) : ''} ${esc(l.dosage)}</div></td>
       <td><select class="pl-sel" data-i="${pr.i}" style="max-width:190px;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px;">${options(pr.p?.id)}</select></td>
-      <td>${ancien === null ? '—' : fmtEUR(ancien)}</td>
+      <td>${pr.p && _plNorm(pr.p.nom) !== _plNorm(_plNomPropre(l.nom)) ? `<span class="page-sub">${esc(pr.p.nom)} →</span>` : ''}${ancien === null ? '' : ' ' + fmtEUR(ancien)}</td>
       <td style="font-weight:700;color:${change ? (nouveau > ancien ? 'var(--red)' : 'var(--accent2)') : 'inherit'};">${fmtEUR(nouveau)}</td>
     </tr>`;
   }).join('');
@@ -141,9 +150,10 @@ function _plAfficherRevue(palier) {
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="max-width:960px;width:96vw;max-height:90vh;overflow:auto;">
     <h3>Liste de prix — palier ${_PL_TIERS[palier]}</h3>
+    <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="pl-renommer" checked> Remplacer aussi mes noms de produits par ceux du PDF</label>
     <div class="page-sub" style="margin-bottom:10px;">Coche les lignes à mettre à jour. Corrige la correspondance avec le menu si elle est fausse. Seul le prix d'achat change (pas ton prix de vente).</div>
     <div class="table-wrap"><table>
-      <thead><tr><th></th><th>Ligne du PDF</th><th>Produit chez toi</th><th>Prix actuel</th><th>Nouveau</th></tr></thead>
+      <thead><tr><th></th><th>Ligne du PDF</th><th>Produit chez toi</th><th>Actuel</th><th>Nouveau</th></tr></thead>
       <tbody>${lignesHtml}</tbody>
     </table></div>
     <h3 style="margin-top:20px;">Chez toi mais plus dans la liste (${absents.length})</h3>
@@ -164,16 +174,38 @@ async function _plAppliquer(palier) {
   const maj = {};
   document.querySelectorAll('.pl-chk:checked').forEach(c => {
     const i = c.dataset.i, id = document.querySelector(`.pl-sel[data-i="${i}"]`).value;
-    if (id) maj[id] = _plLignes[i].prix[palier];
+    if (id) maj[id] = { prix: _plLignes[i].prix[palier], ligne: _plLignes[i] };
+  });
+  // Nouveaux noms : en cas de doublon (même produit chez plusieurs marques), on ajoute la marque.
+  const renommer = document.getElementById('pl-renommer')?.checked;
+  const pris = new Set(_plProduits.filter(p => !maj[p.id]).map(p => _plNorm(p.nom)));
+  const noms = {};
+  if (renommer) Object.entries(maj).forEach(([id, m]) => {
+    let n = _plNomPropre(m.ligne.nom);
+    if (pris.has(_plNorm(n))) n += ` (${_plTitre(m.ligne.section || m.ligne.marque)})`;
+    if (pris.has(_plNorm(n))) n += ' ' + m.ligne.dosage.replace(/\s+/g, '');
+    pris.add(_plNorm(n)); noms[id] = n;
   });
   const suppr = [...document.querySelectorAll('.pl-del:checked')].map(c => c.dataset.id);
   if (!Object.keys(maj).length && !suppr.length) { toast('Rien de coché', 'err'); return; }
   if (suppr.length && !confirm(`Supprimer ${suppr.length} produit(s) ? Les anciennes ventes et commandes gardent leur nom.`)) return;
   try {
-    for (const [id, prix] of Object.entries(maj)) await sbUpdate('compta_produits', id, { prix_achat: prix });
+    for (const [id, m] of Object.entries(maj)) {
+      const p = _plProduits.find(x => x.id === id);
+      const body = { prix_achat: m.prix };
+      if (noms[id] && p && noms[id] !== p.nom) {
+        body.nom = noms[id];
+        // Les commandes/ventes retrouvent parfois le produit par son nom : on les aligne.
+        for (const t of ['compta_commandes_clients', 'compta_commandes_fournisseur', 'compta_ventes']) {
+          const r = await authFetch(`${SUPABASE_URL}/rest/v1/${t}?produit_nom=eq.${encodeURIComponent(p.nom)}`, { method: 'PATCH', headers: supaHeaders(), body: JSON.stringify({ produit_nom: noms[id] }) });
+          if (!r.ok) throw new Error(await r.text());
+        }
+      }
+      await sbUpdate('compta_produits', id, body);
+    }
     for (const id of suppr) await sbDelete('compta_produits', id);
     document.querySelector('.modal-bg')?.remove();
-    toast(`${Object.keys(maj).length} prix mis à jour, ${suppr.length} produit(s) supprimé(s)`, 'ok');
+    toast(`${Object.keys(maj).length} produit(s) mis à jour, ${suppr.length} produit(s) supprimé(s)`, 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
