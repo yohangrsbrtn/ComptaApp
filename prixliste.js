@@ -44,7 +44,7 @@ function _plParse(pages) {
     const rows = {};
     items.forEach(i => { if (!i.s.trim()) return; const y = Math.round(i.y / 3); (rows[y] = rows[y] || []).push(i); });
     Object.keys(rows).map(Number).sort((a, b) => b - a).forEach(y => {
-      const txt = rows[y].sort((a, b) => a.x - b.x).map(i => i.s.trim()).join(' | ').replace(/(\d)\s*\|\s*€/g, '$1 €');
+      const txt = rows[y].sort((a, b) => a.x - b.x).map(i => i.s.replace(/[\u0000-\u001f]/g, '').trim()).join(' | ').replace(/(\d)\s*\|\s*€/g, '$1 €');
       const cells = txt.split(' | ').map(c => c.trim()).filter(Boolean);
       const prix = cells.filter(c => /^\d+(?:[.,]\d+)?\s*€$/.test(c));
       if (prix.length >= 4) {
@@ -74,7 +74,7 @@ function _plParse(pages) {
 // Le texte du PDF perd certaines ligatures (« ti », « tt ») : on les remet, et on retire les mentions de péremption.
 const _PL_CORR = [[/Retatru de/gi, 'Retatrutide'], [/Cu ng/gi, 'Cutting'], [/halotes n/gi, 'Halotestin'], [/Dos nex/gi, 'Dostinex'], [/\s*-\s*exp\.?\s*date.*$/i, '']];
 function _plNomPropre(nom) {
-  let n = nom;
+  let n = (nom || '').replace(/[\u0000-\u001f]/g, '');
   _PL_CORR.forEach(([re, rep]) => { n = n.replace(re, rep); });
   return n.replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
 }
@@ -119,6 +119,36 @@ async function _plAnalyser(file) {
 }
 
 let _plPalier = 0;
+// Le tableau est mémorisé au fil de l'eau (navigateur) : une erreur ou un rechargement ne fait plus tout perdre.
+const _plSignature = () => _plLignes.length + '|' + _plLignes.slice(0, 5).map(l => l.nom).join('/');
+function _plSauver() {
+  try {
+    const etat = {};
+    _plLignes.forEach((l, i) => {
+      etat[i] = { s: document.querySelector(`.pl-sel[data-i="${i}"]`)?.value ?? '', c: !!document.querySelector(`.pl-chk[data-i="${i}"]`)?.checked, v: document.getElementById('pl-vente-' + i)?.value ?? '' };
+    });
+    const del = [...document.querySelectorAll('.pl-del:checked')].map(c => c.dataset.id);
+    localStorage.setItem('pl_etat', JSON.stringify({ sig: _plSignature(), etat, del }));
+  } catch { /* pas grave */ }
+}
+function _plRestaurer() {
+  try {
+    const sv = JSON.parse(localStorage.getItem('pl_etat') || 'null');
+    if (!sv || sv.sig !== _plSignature()) return false;
+    _plLignes.forEach((l, i) => {
+      const e = sv.etat[i]; if (!e) return;
+      const sel = document.querySelector(`.pl-sel[data-i="${i}"]`);
+      if (sel && [...sel.options].some(o => o.value === e.s)) sel.value = e.s;
+      const chk = document.querySelector(`.pl-chk[data-i="${i}"]`); if (chk) chk.checked = e.c;
+      const v = document.getElementById('pl-vente-' + i); if (v) v.value = e.v;
+      const p = _plProduits.find(x => x.id === sel?.value);
+      if (sel?.value === '__new__') document.getElementById('pl-act-' + i).innerHTML = '<span class="badge badge-green">Nouveau produit</span>';
+      else document.getElementById('pl-act-' + i).innerHTML = _plActuelHtml(l, p);
+    });
+    document.querySelectorAll('.pl-del').forEach(c => { c.checked = (sv.del || []).includes(c.dataset.id); });
+    return true;
+  } catch { return false; }
+}
 // Une marque entière en un clic : lignes de la marque cochées (produit existant mis à jour, sinon créé), le reste décoché.
 function _plToutMarque(cle) {
   _plLignes.forEach((l, i) => {
@@ -128,6 +158,7 @@ function _plToutMarque(cle) {
     if (dedans) { if (!sel.value) sel.value = '__new__'; _plChoix(i, sel.value); chk.checked = true; }
     else chk.checked = false;
   });
+  _plSauver();
   toast('Marque sélectionnée : vérifie le tableau puis clique sur Appliquer', 'ok');
 }
 function _plActuelHtml(l, p) {
@@ -206,9 +237,13 @@ function _plAfficherRevue(palier) {
     </div>
   </div>`;
   document.body.appendChild(bg);
+  if (_plRestaurer()) toast('Ton tableau précédent a été restauré', 'ok');
+  bg.addEventListener('input', _plSauver);
+  bg.addEventListener('change', _plSauver);
 }
 
 async function _plAppliquer(palier) {
+  _plSauver();
   const maj = {}, nouveaux = [];
   document.querySelectorAll('.pl-chk:checked').forEach(c => {
     const i = c.dataset.i, id = document.querySelector(`.pl-sel[data-i="${i}"]`).value;
@@ -264,6 +299,7 @@ async function _plAppliquer(palier) {
       if (!isNaN(n.vente)) body.prix_vente = n.vente;
       await sbInsert('compta_produits', body);
     }
+    try { localStorage.removeItem('pl_etat'); } catch { /* pas grave */ }
     document.querySelector('.modal-bg')?.remove();
     toast(`${Object.keys(maj).length} produit(s) mis à jour, ${nouveaux.length} ajouté(s), ${suppr.length} produit(s) supprimé(s)`, 'ok');
     await renderChimie();
