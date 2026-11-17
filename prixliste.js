@@ -127,9 +127,9 @@ function _plActuelHtml(l, p) {
 // Choix manuel d'un produit : on affiche son prix actuel et on coche la ligne.
 function _plChoix(i, id) {
   const p = _plProduits.find(x => x.id === id);
-  document.getElementById('pl-act-' + i).innerHTML = _plActuelHtml(_plLignes[i], p);
+  document.getElementById('pl-act-' + i).innerHTML = id === '__new__' ? '<span class="badge badge-green">Nouveau produit</span>' : _plActuelHtml(_plLignes[i], p);
   const chk = document.querySelector(`.pl-chk[data-i="${i}"]`);
-  if (chk) chk.checked = !!p;
+  if (chk) chk.checked = !!id;
   document.getElementById('pl-vente-' + i).value = p?.prix_vente ?? '';
   // Un produit rattaché à une ligne du PDF ne peut plus être supprimé comme « disparu ».
   const choisis = new Set([...document.querySelectorAll('.pl-sel')].map(x => x.value).filter(Boolean));
@@ -153,7 +153,7 @@ function _plAfficherRevue(palier) {
   propositions.forEach(pr => { if (pr.p && (!meilleurPar[pr.p.id] || pr.s > meilleurPar[pr.p.id].s)) meilleurPar[pr.p.id] = pr; });
   propositions.forEach(pr => { if (pr.p && meilleurPar[pr.p.id] !== pr) pr.p = null; });
   const trouves = new Set(propositions.filter(pr => pr.p).map(pr => pr.p.id));
-  const options = sel => `<option value="">— Ignorer —</option>` + _plProduits.map(p => `<option value="${p.id}" ${sel === p.id ? 'selected' : ''}>${esc(p.nom)}${p.marque ? ' · ' + esc(p.marque) : ''}</option>`).join('');
+  const options = sel => `<option value="">— Ignorer —</option><option value="__new__">+ Ajouter comme nouveau produit</option>` + _plProduits.map(p => `<option value="${p.id}" ${sel === p.id ? 'selected' : ''}>${esc(p.nom)}${p.marque ? ' · ' + esc(p.marque) : ''}</option>`).join('');
 
   const lignesHtml = propositions.map(pr => {
     const l = _plLignes[pr.i], nouveau = l.prix[palier];
@@ -196,10 +196,11 @@ function _plAfficherRevue(palier) {
 }
 
 async function _plAppliquer(palier) {
-  const maj = {};
+  const maj = {}, nouveaux = [];
   document.querySelectorAll('.pl-chk:checked').forEach(c => {
     const i = c.dataset.i, id = document.querySelector(`.pl-sel[data-i="${i}"]`).value;
-    if (id) maj[id] = { prix: _plLignes[i].prix[palier], ligne: _plLignes[i], vente: parseFloat(document.getElementById('pl-vente-' + i).value) };
+    if (id === '__new__') nouveaux.push({ ligne: _plLignes[i], prix: _plLignes[i].prix[palier], vente: parseFloat(document.getElementById('pl-vente-' + i).value) });
+    else if (id) maj[id] = { prix: _plLignes[i].prix[palier], ligne: _plLignes[i], vente: parseFloat(document.getElementById('pl-vente-' + i).value) };
   });
   // Nouveaux noms : en cas de doublon (même produit chez plusieurs marques), on ajoute la marque.
   const renommer = document.getElementById('pl-renommer')?.checked;
@@ -212,7 +213,13 @@ async function _plAppliquer(palier) {
     pris.add(_plNorm(n)); noms[id] = n;
   });
   const suppr = [...document.querySelectorAll('.pl-del:checked')].map(c => c.dataset.id);
-  if (!Object.keys(maj).length && !suppr.length) { toast('Rien de coché', 'err'); return; }
+  nouveaux.forEach(n => {
+    let nom = _plNomPropre(n.ligne.nom);
+    if (pris.has(_plNorm(nom))) nom += ` (${_plTitre(n.ligne.section || n.ligne.marque)})`;
+    if (pris.has(_plNorm(nom))) nom += ' ' + n.ligne.dosage.replace(/\s+/g, '');
+    pris.add(_plNorm(nom)); n.nom = nom;
+  });
+  if (!Object.keys(maj).length && !suppr.length && !nouveaux.length) { toast('Rien de coché', 'err'); return; }
   if (suppr.length && !confirm(`Supprimer ${suppr.length} produit(s) ? Les anciennes ventes et commandes gardent leur nom.`)) return;
   try {
     for (const [id, m] of Object.entries(maj)) {
@@ -229,9 +236,14 @@ async function _plAppliquer(palier) {
       }
       await sbUpdate('compta_produits', id, body);
     }
+    for (const n of nouveaux) {
+      const body = { nom: n.nom, marque: _plTitre(n.ligne.section) || n.ligne.marque || null, prix_achat: n.prix, stock_reel: 0 };
+      if (!isNaN(n.vente)) body.prix_vente = n.vente;
+      await sbInsert('compta_produits', body);
+    }
     for (const id of suppr) await sbDelete('compta_produits', id);
     document.querySelector('.modal-bg')?.remove();
-    toast(`${Object.keys(maj).length} produit(s) mis à jour, ${suppr.length} produit(s) supprimé(s)`, 'ok');
+    toast(`${Object.keys(maj).length} produit(s) mis à jour, ${nouveaux.length} ajouté(s), ${suppr.length} produit(s) supprimé(s)`, 'ok');
     await renderChimie();
   } catch (e) { toast('Erreur : ' + e.message, 'err'); }
 }
